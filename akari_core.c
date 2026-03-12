@@ -1,10 +1,25 @@
 #include "akari_core.h"
 #include <errno.h>
+#include <fcntl.h>
+
+static int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) return -1;
+    return 0;
+}
 
 int akari_tcp_init(void) {
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
         AKARI_LOG("could not open socket");
+        return -1;
+    }
+    
+    if (set_nonblocking(fd) == -1) {
+        AKARI_LOG("could not set socket to non-blocking");
+        close(fd);
+        return -1;
     }
     return fd;
 }
@@ -28,7 +43,8 @@ int akari_tcp_listen(int fd) {
 int akari_tcp_accept(int fd, const struct sockaddr_in* addr) {
     for (;;) {
         socklen_t addr_len = sizeof(struct sockaddr_in);
-        int client_fd = accept4(fd, (struct sockaddr*)addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        int client_fd = accept(fd, (struct sockaddr*)addr, &addr_len);
+        
         if (client_fd == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;
         }
@@ -39,6 +55,13 @@ int akari_tcp_accept(int fd, const struct sockaddr_in* addr) {
             AKARI_LOG("accept failed");
             return -1;
         }
+        
+        if (set_nonblocking(client_fd) == -1) {
+            AKARI_LOG("could not set client socket to non-blocking");
+            close(client_fd);
+            return -1;
+        }
+        
         return client_fd;
     }
     return -1;
@@ -119,8 +142,4 @@ int akari_tcp_start(uint16_t port) {
         return -1;
     }
     return fd;
-}
-
-int main() {
-    return 0;
 }
