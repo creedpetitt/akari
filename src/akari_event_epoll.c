@@ -1,4 +1,4 @@
-#include "akari_internal.h"
+#include "../include/akari_internal.h"
 #include <sys/epoll.h>
 #include <unistd.h>
 

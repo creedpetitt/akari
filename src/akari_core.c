@@ -1,4 +1,4 @@
-#include "akari_core.h"
+#include "../include/akari_core.h"
 #include <errno.h>
 #include <fcntl.h>
 

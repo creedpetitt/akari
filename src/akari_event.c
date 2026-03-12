@@ -1,5 +1,5 @@
-#include "akari_event.h"
-#include "akari_internal.h"
+#include "../include/akari_event.h"
+#include "../include/akari_internal.h"
 #include <string.h>
 #include <unistd.h>
 
