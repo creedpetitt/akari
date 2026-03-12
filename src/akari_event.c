@@ -84,9 +84,9 @@ void akari_run_server(uint16_t port, akari_callback on_data) {
     int srv_fd = akari_tcp_start(port);
     if (srv_fd == -1) return;
 
-#ifdef __linux__
-    akari_run_epoll(srv_fd, on_data);
-#else
+#ifdef AKARI_USE_POLL
     akari_run_poll(srv_fd, on_data);
+#else
+    akari_run_epoll(srv_fd, on_data);
 #endif
 }

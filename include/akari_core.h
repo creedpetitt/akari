@@ -1,17 +1,43 @@
 #ifndef AKARI_CORE_H
 #define AKARI_CORE_H
 
-#include <netinet/in.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <sys/types.h>
+
+// PLATFORM DETECTION
+#if defined(__linux__) || defined(__APPLE__)
+    #include <netinet/in.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+#elif defined(AKARI_USE_LWIP) || defined(ESP_PLATFORM)
+    #include "lwip/sockets.h"
+    #include "lwip/netdb.h"
+#elif defined(__MBED__)
+    #include "mbed_sockets.h"
+#else
+    struct sockaddr_in {
+        uint16_t sin_family;
+        uint16_t sin_port;
+        struct { uint32_t s_addr; } sin_addr;
+    };
+    #define AF_INET 2
+    #define SOCK_STREAM 1
+    #define SOMAXCONN 128
+#endif
+
+// --- PORTABILITY GUARDS ---
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 #ifndef AKARI_LOG
     #ifdef AKARI_DEBUG
         #include <stdio.h>
-        #define AKARI_LOG(msg) puts(msg)
+        #define AKARI_LOG(fmt, ...) printf("[AKARI] " fmt "\n", ##__VA_ARGS__)
     #else
-        #define AKARI_LOG(msg) ((void)0)
+        #define AKARI_LOG(fmt, ...) ((void)0)
     #endif
 #endif
 
