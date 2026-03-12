@@ -113,5 +113,21 @@ def main():
 
     print(f"Successfully generated {OUTPUT_FILE}!")
 
+    print("Generating tools/akari_lib.h for CLI embedding...")
+    with open(OUTPUT_FILE, 'rb') as f:
+        data = f.read()
+    
+    with open('tools/akari_lib.h', 'w') as out:
+        out.write("#ifndef AKARI_LIB_H\n#define AKARI_LIB_H\n\n")
+        out.write(f"unsigned char AKARI_LIB_DATA[] = {{\n    ")
+        for i, b in enumerate(data):
+            out.write(f"0x{b:02x}, ")
+            if (i + 1) % 12 == 0:
+                out.write("\n    ")
+        out.write("\n};\n")
+        out.write(f"unsigned int AKARI_LIB_LEN = {len(data)};\n\n")
+        out.write("#endif\n")
+    print("Successfully generated tools/akari_lib.h!")
+
 if __name__ == "__main__":
     main()
