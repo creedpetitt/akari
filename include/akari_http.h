@@ -2,7 +2,7 @@
 #define AKARI_HTTP_H
 
 #include "akari_event.h"
-#include "../vendor/picohttpparser/picohttpparser.h"
+#include "picohttpparser.h"
 
 #ifndef AKARI_MAX_ROUTES
 #define AKARI_MAX_ROUTES 16
