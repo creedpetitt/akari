@@ -1,10 +1,16 @@
-#include "../include/akari_event.h"
-#include "../include/akari_internal.h"
+#include "akari_event.h"
+#include "akari_internal.h"
 #include <string.h>
 #include <unistd.h>
 
+volatile int akari_running = 1;
+
 static akari_connection conn_pool[AKARI_MAX_CONNECTIONS];
 static int conn_pool_initialized = 0;
+
+void akari_stop(void) {
+    akari_running = 0;
+}
 
 static void init_conn_pool(void) {
     if (conn_pool_initialized) return;

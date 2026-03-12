@@ -1,4 +1,4 @@
-#include "../include/akari_internal.h"
+#include "akari_internal.h"
 #include <poll.h>
 #include <unistd.h>
 
@@ -17,10 +17,12 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
 
     AKARI_LOG("poll engine started");
 
-    while (1) {
-        int ready = poll(fds, nfds, -1);
+    while (akari_running) {
+        int ready = poll(fds, nfds, 100);
         if (ready == -1) {
-            AKARI_LOG("poll failed");
+            if (akari_running) {
+                AKARI_LOG("poll failed");
+            }
             break;
         }
 

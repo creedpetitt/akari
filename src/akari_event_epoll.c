@@ -1,4 +1,4 @@
-#include "../include/akari_internal.h"
+#include "akari_internal.h"
 #include <sys/epoll.h>
 #include <unistd.h>
 
@@ -23,10 +23,12 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
 
     AKARI_LOG("epoll engine started");
 
-    while (1) {
-        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_EVENTS, -1);
+    while (akari_running) {
+        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_EVENTS, 100);
         if (nfds == -1) {
-            AKARI_LOG("epoll_wait failed");
+            if (akari_running) {
+                AKARI_LOG("epoll_wait failed");
+            }
             break;
         }
         for (int i = 0; i < nfds; i++) {
