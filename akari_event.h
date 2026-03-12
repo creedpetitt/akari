@@ -3,6 +3,10 @@
 
 #include "akari_core.h"
 
+#ifndef AKARI_MAX_CONNECTIONS
+#define AKARI_MAX_CONNECTIONS 8
+#endif
+
 typedef struct {
     int fd;
     char buf[4096];

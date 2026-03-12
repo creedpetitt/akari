@@ -3,8 +3,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define AKARI_MAX_CONNECTIONS 128
-
 static akari_connection conn_pool[AKARI_MAX_CONNECTIONS];
 static int conn_pool_initialized = 0;
 
