@@ -7,60 +7,21 @@ SOURCES_DIRS = ['src', 'vendor/picohttpparser']
 IGNORE_FILES = ['main.c']
 OUTPUT_FILE = 'akari.h'
 
-def get_files(dirs, extensions):
-    files = []
-    for d in dirs:
-        if not os.path.exists(d): continue
-        for f in os.listdir(d):
-            if f.endswith(extensions) and f not in IGNORE_FILES:
-                files.append(os.path.join(d, f))
-    return files
-
-def process_file(path):
+def simple_process(path):
     with open(path, 'r') as f:
         lines = f.readlines()
     
     processed = []
-    system_includes = set()
-    
     for line in lines:
-        if re.match(r'#include\s+"(akari_|pico|jsmn).*h"', line) or \
-           re.match(r'#include\s+"\.\./include/akari_.*h"', line) or \
-           re.match(r'#include\s+"\.\./vendor/.*h"', line):
+        if re.match(r'#include\s+"(akari_|pico|jsmn|(?:\.\./)*include/|(?:\.\./)*vendor/).*h"', line):
             continue
-        if re.match(r'#include\s+<.*>', line):
-            system_includes.add(line.strip())
-            continue
-        if re.match(r'#ifndef\s+AKARI_.*_H', line) or \
-           re.match(r'#define\s+AKARI_.*_H', line) or \
-           re.match(r'#endif\s+//\s+AKARI_.*_H', line) or \
-           re.match(r'#endif\s+/\*\s+AKARI_.*_H', line) or \
-           re.match(r'#endif\s*$', line.strip()): 
-            pass
-        elif re.match(r'#pragma\s+once', line):
-            continue
-        else:
-            processed.append(line)
+        processed.append(line)
         
-    return "".join(processed), system_includes
-
-def simple_process(path, is_header):
-    with open(path, 'r') as f:
-        content = f.read()
-    
-    # Remove internal includes
-    content = re.sub(r'#include\s+"(akari_|pico|jsmn|(?:\.\./)*include/|(?:\.\./)*vendor/).*h"', '', content)
-    
-    # Extract system includes
-    sys_inc = set(re.findall(r'#include\s+<.*>', content))
-    content = re.sub(r'#include\s+<.*>', '', content)
-    
-    return content, sys_inc
+    return "".join(processed)
 
 def main():
     print(f"Generating {OUTPUT_FILE}...")
     
-    all_system_includes = set()
     header_content = []
     source_content = []
 
@@ -75,23 +36,32 @@ def main():
     
     for h in headers:
         if not os.path.exists(h): continue
-        content, sys_inc = simple_process(h, True)
-        all_system_includes.update(sys_inc)
+        content = simple_process(h)
         header_content.append(f"// --- {h} ---\n{content}\n")
 
     sources = [
         'src/akari_core.c',
         'src/akari_event.c',
-        'src/akari_event_epoll.c',
-        'src/akari_event_poll.c',
         'src/akari_http.c',
         'vendor/picohttpparser/picohttpparser.c'
     ]
     for s in sources:
         if not os.path.exists(s): continue
-        content, sys_inc = simple_process(s, False)
-        all_system_includes.update(sys_inc)
+        content = simple_process(s)
         source_content.append(f"// --- {s} ---\n{content}\n")
+
+    # Handle the event engines with platform guards
+    source_content.append("\n// --- PLATFORM SPECIFIC EVENT ENGINES ---\n")
+    
+    epoll_content = simple_process('src/akari_event_epoll.c')
+    source_content.append("#ifndef AKARI_USE_POLL\n")
+    source_content.append(epoll_content)
+    source_content.append("#endif // AKARI_USE_POLL\n\n")
+
+    poll_content = simple_process('src/akari_event_poll.c')
+    source_content.append("#ifdef AKARI_USE_POLL\n")
+    source_content.append(poll_content)
+    source_content.append("#endif // AKARI_USE_POLL\n\n")
 
     with open(OUTPUT_FILE, 'w') as out:
         out.write("// Akari Single-Header Web Server Library\n")
@@ -99,10 +69,6 @@ def main():
         
         out.write("#ifndef AKARI_SINGLE_HEADER_H\n")
         out.write("#define AKARI_SINGLE_HEADER_H\n\n")
-        
-        for inc in sorted(list(all_system_includes)):
-            out.write(f"{inc}\n")
-        out.write("\n")
         
         out.write("".join(header_content))
         out.write("#endif // AKARI_SINGLE_HEADER_H\n\n")

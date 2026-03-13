@@ -3,20 +3,20 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <sys/types.h>
 
 // PLATFORM DETECTION
 #if defined(__linux__) || defined(__APPLE__)
+    #include <sys/types.h>
     #include <netinet/in.h>
     #include <unistd.h>
     #include <arpa/inet.h>
     #include <sys/socket.h>
 #elif defined(AKARI_USE_LWIP) || defined(ESP_PLATFORM)
+    #include <sys/types.h>
     #include "lwip/sockets.h"
     #include "lwip/netdb.h"
-#elif defined(__MBED__)
-    #include "mbed_sockets.h"
 #else
+    typedef int32_t ssize_t;
     struct sockaddr_in {
         uint16_t sin_family;
         uint16_t sin_port;

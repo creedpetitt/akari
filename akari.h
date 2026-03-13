@@ -4,47 +4,26 @@
 #ifndef AKARI_SINGLE_HEADER_H
 #define AKARI_SINGLE_HEADER_H
 
-#include <arpa/inet.h>
-#include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <nmmintrin.h>
-#include <poll.h>
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/epoll.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <time.h>
-#include <unistd.h>
-#include <x86intrin.h>
-
 // --- include/akari_core.h ---
 #ifndef AKARI_CORE_H
 #define AKARI_CORE_H
 
-
-
-
+#include <stdint.h>
+#include <stddef.h>
 
 // PLATFORM DETECTION
 #if defined(__linux__) || defined(__APPLE__)
-    
-    
-    
-    
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
 #elif defined(AKARI_USE_LWIP) || defined(ESP_PLATFORM)
+    #include <sys/types.h>
     #include "lwip/sockets.h"
     #include "lwip/netdb.h"
-#elif defined(__MBED__)
-    #include "mbed_sockets.h"
 #else
+    typedef int32_t ssize_t;
     struct sockaddr_in {
         uint16_t sin_family;
         uint16_t sin_port;
@@ -62,7 +41,7 @@
 
 #ifndef AKARI_LOG
     #ifdef AKARI_DEBUG
-        
+        #include <stdio.h>
         #define AKARI_LOG(fmt, ...) printf("[AKARI] " fmt "\n", ##__VA_ARGS__)
     #else
         #define AKARI_LOG(fmt, ...) ((void)0)
@@ -83,7 +62,6 @@ ssize_t akari_tcp_recv(int fd, void *buf, size_t size);
 // --- include/akari_event.h ---
 #ifndef AKARI_EVENT_H
 #define AKARI_EVENT_H
-
 
 
 #ifndef AKARI_MAX_CONNECTIONS
@@ -110,7 +88,6 @@ void akari_add_timer(akari_timer_callback cb, int interval_ms);
 #define AKARI_INTERNAL_H
 
 
-
 void akari_run_epoll(int srv_fd, akari_callback on_data);
 void akari_run_poll(int srv_fd, akari_callback on_data);
 
@@ -125,8 +102,6 @@ extern volatile int akari_running;
 // --- include/akari_http.h ---
 #ifndef AKARI_HTTP_H
 #define AKARI_HTTP_H
-
-
 
 
 #ifndef AKARI_MAX_ROUTES
@@ -236,8 +211,8 @@ const char* akari_get_path_param(akari_context* ctx, const char* key, size_t* ou
 #ifndef picohttpparser_h
 #define picohttpparser_h
 
-
-
+#include <stdint.h>
+#include <sys/types.h>
 
 #ifdef _MSC_VER
 #define ssize_t intptr_t
@@ -325,7 +300,7 @@ int phr_decode_chunked_is_in_data(struct phr_chunked_decoder *decoder);
 #ifndef JSMN_H
 #define JSMN_H
 
-
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -776,9 +751,8 @@ JSMN_API void jsmn_init(jsmn_parser *parser) {
 #ifdef AKARI_IMPLEMENTATION
 
 // --- src/akari_core.c ---
-
-
-
+#include <errno.h>
+#include <fcntl.h>
 
 static int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
@@ -921,22 +895,20 @@ int akari_tcp_start(uint16_t port) {
     }
     return fd;
 }
+
+
 // --- src/akari_event.c ---
-
-
-
-
-
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
 
 #if defined(__linux__) || defined(__APPLE__)
-    
+    #include <sys/time.h>
 #elif defined(ESP_PLATFORM)
     #include "esp_timer.h"
-#elif defined(__MBED__)
-    #include "mbed.h"
 #endif
 
-// Time Helper
+// --- Time Helper ---
 static uint64_t get_time_ms(void) {
 #if defined(__linux__) || defined(__APPLE__)
     struct timespec ts;
@@ -945,9 +917,6 @@ static uint64_t get_time_ms(void) {
 #elif defined(ESP_PLATFORM)
     // ESP32 timer returns microseconds since boot
     return (uint64_t)(esp_timer_get_time() / 1000ULL);
-#elif defined(__MBED__)
-    // Mbed OS Kernel uptime
-    return (uint64_t)rtos::Kernel::get_ms_count();
 #else
     // Pure Bare-Metal Fallback (Requires user to define it)
     return 0; 
@@ -1077,140 +1046,13 @@ void akari_run_server(uint16_t port, akari_callback on_data) {
 #endif
 }
 
-// --- src/akari_event_epoll.c ---
-
-
-
-
-#define AKARI_MAX_EVENTS 64
-
-void akari_run_epoll(int srv_fd, akari_callback on_data) {
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        AKARI_LOG("epoll_create1 failed");
-        return;
-    }
-
-    struct epoll_event ev, events[AKARI_MAX_EVENTS];
-
-    ev.events = EPOLLIN;
-    ev.data.fd = srv_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, srv_fd, &ev) == -1) {
-        AKARI_LOG("epoll_ctl server fd failed");
-        close(epoll_fd);
-        return;
-    }
-
-    AKARI_LOG("epoll engine started");
-
-    while (akari_running) {
-        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_EVENTS, 100);
-        if (nfds == -1) {
-            if (akari_running) {
-                AKARI_LOG("epoll_wait failed");
-            }
-            break;
-        }
-        for (int i = 0; i < nfds; i++) {
-            if (events[i].data.fd == srv_fd) {
-                int client_fd = akari_tcp_accept(srv_fd, NULL);
-                if (client_fd != -1) {
-                    ev.events = EPOLLIN;
-                    ev.data.fd = client_fd;
-                    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
-                        AKARI_LOG("epoll_ctl client fd failed");
-                        close(client_fd);
-                    }
-                }
-            } else {
-                int client_fd = events[i].data.fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1) {
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-                    close(client_fd);
-                }
-            }
-        }
-        akari_check_timers();
-    }
-
-    close(epoll_fd);
-}
-
-// --- src/akari_event_poll.c ---
-
-
-
-
-#define AKARI_MAX_POLL_FDS 128
-
-void akari_run_poll(int srv_fd, akari_callback on_data) {
-    struct pollfd fds[AKARI_MAX_POLL_FDS];
-    int nfds = 1;
-
-    fds[0].fd = srv_fd;
-    fds[0].events = POLLIN;
-
-    for (int i = 1; i < AKARI_MAX_POLL_FDS; i++) {
-        fds[i].fd = -1;
-    }
-
-    AKARI_LOG("poll engine started");
-
-    while (akari_running) {
-        int ready = poll(fds, nfds, 100);
-        if (ready == -1) {
-            if (akari_running) {
-                AKARI_LOG("poll failed");
-            }
-            break;
-        }
-
-        for (int i = 0; i < nfds; i++) {
-            if (fds[i].revents == 0) continue;
-
-            if (fds[i].fd == srv_fd) {
-                int client_fd = akari_tcp_accept(srv_fd, NULL);
-                if (client_fd != -1) {
-                    int added = 0;
-                    for (int j = 1; j < AKARI_MAX_POLL_FDS; j++) {
-                        if (fds[j].fd == -1) {
-                            fds[j].fd = client_fd;
-                            fds[j].events = POLLIN;
-                            if (j >= nfds) nfds = j + 1;
-                            added = 1;
-                            break;
-                        }
-                    }
-                    if (!added) {
-                        AKARI_LOG("poll fds full");
-                        close(client_fd);
-                    }
-                }
-            } else {
-                int client_fd = fds[i].fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
-                    close(client_fd);
-                    fds[i].fd = -1;
-                }
-            }
-        }
-        akari_check_timers();
-    }
-}
-
 // --- src/akari_http.c ---
- 
 
 
-
-
- 
-
-
-
-
+#include <string.h> 
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 
 typedef struct {
     const char* method;
@@ -1607,17 +1449,16 @@ void akari_http_start(uint16_t port) {
  * IN THE SOFTWARE.
  */
 
-
-
-
+#include <assert.h>
+#include <stddef.h>
+#include <string.h>
 #ifdef __SSE4_2__
 #ifdef _MSC_VER
-
+#include <nmmintrin.h>
 #else
-
+#include <x86intrin.h>
 #endif
 #endif
-
 
 #if __GNUC__ >= 3
 #define likely(x) __builtin_expect(!!(x), 1)
@@ -2288,5 +2129,130 @@ int phr_decode_chunked_is_in_data(struct phr_chunked_decoder *decoder)
 #undef CHECK_EOF
 #undef EXPECT_CHAR
 #undef ADVANCE_TOKEN
+
+
+// --- PLATFORM SPECIFIC EVENT ENGINES ---
+#ifndef AKARI_USE_POLL
+#include <sys/epoll.h>
+#include <unistd.h>
+
+#define AKARI_MAX_EVENTS 64
+
+void akari_run_epoll(int srv_fd, akari_callback on_data) {
+    int epoll_fd = epoll_create1(0);
+    if (epoll_fd == -1) {
+        AKARI_LOG("epoll_create1 failed");
+        return;
+    }
+
+    struct epoll_event ev, events[AKARI_MAX_EVENTS];
+
+    ev.events = EPOLLIN;
+    ev.data.fd = srv_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, srv_fd, &ev) == -1) {
+        AKARI_LOG("epoll_ctl server fd failed");
+        close(epoll_fd);
+        return;
+    }
+
+    AKARI_LOG("epoll engine started");
+
+    while (akari_running) {
+        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_EVENTS, 100);
+        if (nfds == -1) {
+            if (akari_running) {
+                AKARI_LOG("epoll_wait failed");
+            }
+            break;
+        }
+        for (int i = 0; i < nfds; i++) {
+            if (events[i].data.fd == srv_fd) {
+                int client_fd = akari_tcp_accept(srv_fd, NULL);
+                if (client_fd != -1) {
+                    ev.events = EPOLLIN;
+                    ev.data.fd = client_fd;
+                    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
+                        AKARI_LOG("epoll_ctl client fd failed");
+                        close(client_fd);
+                    }
+                }
+            } else {
+                int client_fd = events[i].data.fd;
+                int status = akari_handle_client(client_fd, on_data);
+                if (status == -1) {
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    close(client_fd);
+                }
+            }
+        }
+        akari_check_timers();
+    }
+
+    close(epoll_fd);
+}
+#endif // AKARI_USE_POLL
+
+#ifdef AKARI_USE_POLL
+#include <poll.h>
+#include <unistd.h>
+
+#define AKARI_MAX_POLL_FDS 128
+
+void akari_run_poll(int srv_fd, akari_callback on_data) {
+    struct pollfd fds[AKARI_MAX_POLL_FDS];
+    int nfds = 1;
+
+    fds[0].fd = srv_fd;
+    fds[0].events = POLLIN;
+
+    for (int i = 1; i < AKARI_MAX_POLL_FDS; i++) {
+        fds[i].fd = -1;
+    }
+
+    AKARI_LOG("poll engine started");
+
+    while (akari_running) {
+        int ready = poll(fds, nfds, 100);
+        if (ready == -1) {
+            if (akari_running) {
+                AKARI_LOG("poll failed");
+            }
+            break;
+        }
+
+        for (int i = 0; i < nfds; i++) {
+            if (fds[i].revents == 0) continue;
+
+            if (fds[i].fd == srv_fd) {
+                int client_fd = akari_tcp_accept(srv_fd, NULL);
+                if (client_fd != -1) {
+                    int added = 0;
+                    for (int j = 1; j < AKARI_MAX_POLL_FDS; j++) {
+                        if (fds[j].fd == -1) {
+                            fds[j].fd = client_fd;
+                            fds[j].events = POLLIN;
+                            if (j >= nfds) nfds = j + 1;
+                            added = 1;
+                            break;
+                        }
+                    }
+                    if (!added) {
+                        AKARI_LOG("poll fds full");
+                        close(client_fd);
+                    }
+                }
+            } else {
+                int client_fd = fds[i].fd;
+                int status = akari_handle_client(client_fd, on_data);
+                if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
+                    close(client_fd);
+                    fds[i].fd = -1;
+                }
+            }
+        }
+        akari_check_timers();
+    }
+}
+#endif // AKARI_USE_POLL
 
 #endif // AKARI_IMPLEMENTATION

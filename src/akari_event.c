@@ -8,8 +8,6 @@
     #include <sys/time.h>
 #elif defined(ESP_PLATFORM)
     #include "esp_timer.h"
-#elif defined(__MBED__)
-    #include "mbed.h"
 #endif
 
 // Time Helper
@@ -21,9 +19,6 @@ static uint64_t get_time_ms(void) {
 #elif defined(ESP_PLATFORM)
     // ESP32 timer returns microseconds since boot
     return (uint64_t)(esp_timer_get_time() / 1000ULL);
-#elif defined(__MBED__)
-    // Mbed OS Kernel uptime
-    return (uint64_t)rtos::Kernel::get_ms_count();
 #else
     // Pure Bare-Metal Fallback (Requires user to define it)
     return 0; 
