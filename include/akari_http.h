@@ -41,6 +41,8 @@ typedef struct {
     char res_buf[AKARI_RES_BUF_SIZE];
     size_t res_len;
 
+    int keep_alive;
+
     akari_connection* _conn;
 } akari_context;
 
