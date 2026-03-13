@@ -56,5 +56,6 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             }
         }
+        akari_check_timers();
     }
 }

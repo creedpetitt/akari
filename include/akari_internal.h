@@ -8,6 +8,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data);
 
 int akari_handle_client(int fd, akari_callback on_data);
 void akari_release_conn(int fd);
+void akari_check_timers(void);
 
 extern volatile int akari_running;
 

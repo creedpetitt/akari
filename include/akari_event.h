@@ -14,8 +14,10 @@ typedef struct {
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
+typedef void (*akari_timer_callback)(void);
 
 void akari_run_server(uint16_t port, akari_callback on_data);
 void akari_stop(void);
+void akari_add_timer(akari_timer_callback cb, int interval_ms);
 
 #endif

@@ -2,11 +2,73 @@
 #include "akari_internal.h"
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+
+#if defined(__linux__) || defined(__APPLE__)
+    #include <sys/time.h>
+#elif defined(ESP_PLATFORM)
+    #include "esp_timer.h"
+#elif defined(__MBED__)
+    #include "mbed.h"
+#endif
+
+// Time Helper
+static uint64_t get_time_ms(void) {
+#if defined(__linux__) || defined(__APPLE__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)(ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+#elif defined(ESP_PLATFORM)
+    // ESP32 timer returns microseconds since boot
+    return (uint64_t)(esp_timer_get_time() / 1000ULL);
+#elif defined(__MBED__)
+    // Mbed OS Kernel uptime
+    return (uint64_t)rtos::Kernel::get_ms_count();
+#else
+    // Pure Bare-Metal Fallback (Requires user to define it)
+    return 0; 
+#endif
+}
+
+#define AKARI_MAX_TIMERS 4
 
 volatile int akari_running = 1;
 
+typedef struct {
+    akari_timer_callback cb;
+    uint64_t interval_ms;
+    uint64_t last_run_ms;
+} akari_timer;
+
+static akari_timer timer_pool[AKARI_MAX_TIMERS];
+static int timer_count = 0;
+
 static akari_connection conn_pool[AKARI_MAX_CONNECTIONS];
 static int conn_pool_initialized = 0;
+
+void akari_add_timer(akari_timer_callback cb, int interval_ms) {
+    if (timer_count < AKARI_MAX_TIMERS) {
+        timer_pool[timer_count].cb = cb;
+        timer_pool[timer_count].interval_ms = interval_ms;
+        timer_pool[timer_count].last_run_ms = 0; // Will run immediately
+        timer_count++;
+    }
+}
+
+void akari_check_timers(void) {
+    if (timer_count == 0) return;
+
+    uint64_t now = get_time_ms();
+
+    for (int i = 0; i < timer_count; i++) {
+        if (timer_pool[i].last_run_ms == 0 || 
+            (now - timer_pool[i].last_run_ms) >= timer_pool[i].interval_ms) {
+            
+            timer_pool[i].cb(); 
+            timer_pool[i].last_run_ms = now; 
+        }
+    }
+}
 
 void akari_stop(void) {
     akari_running = 0;

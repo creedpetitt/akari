@@ -51,6 +51,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 }
             }
         }
+        akari_check_timers();
     }
 
     close(epoll_fd);
