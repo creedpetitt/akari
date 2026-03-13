@@ -45,9 +45,16 @@ void handle_signal(int sig) {
     akari_stop();
 }
 
+void read_sensor() {
+    printf("[TIMER] Reading hardware sensors...\n");
+}
+
 int main() {
     signal(SIGINT, handle_signal);
     printf("Starting Akari Web Server on port 8080...\n");
+
+    // Start background task
+    akari_add_timer(read_sensor, 2000);
 
     AKARI_GET("/", handle_home);
     AKARI_GET("/api", handle_api);
