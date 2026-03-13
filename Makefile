@@ -28,6 +28,11 @@ all: $(TARGET)
 $(TARGET):
 	$(CC) $(CFLAGS) $(INCLUDES) $(SRCS) -o $(TARGET)
 
+# Bundle the single-header and recompile the self-contained CLI
+release:
+	python3 scripts/gen_single_header.py
+	$(CC) -O2 tools/akari_cli.c -o akari
+
 clean:
 	rm -f $(TARGET)
 

@@ -19,7 +19,9 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <x86intrin.h>
 
@@ -31,13 +33,39 @@
 
 
 
+// PLATFORM DETECTION
+#if defined(__linux__) || defined(__APPLE__)
+    
+    
+    
+    
+#elif defined(AKARI_USE_LWIP) || defined(ESP_PLATFORM)
+    #include "lwip/sockets.h"
+    #include "lwip/netdb.h"
+#elif defined(__MBED__)
+    #include "mbed_sockets.h"
+#else
+    struct sockaddr_in {
+        uint16_t sin_family;
+        uint16_t sin_port;
+        struct { uint32_t s_addr; } sin_addr;
+    };
+    #define AF_INET 2
+    #define SOCK_STREAM 1
+    #define SOMAXCONN 128
+#endif
+
+// --- PORTABILITY GUARDS ---
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 #ifndef AKARI_LOG
     #ifdef AKARI_DEBUG
         
-        #define AKARI_LOG(msg) puts(msg)
+        #define AKARI_LOG(fmt, ...) printf("[AKARI] " fmt "\n", ##__VA_ARGS__)
     #else
-        #define AKARI_LOG(msg) ((void)0)
+        #define AKARI_LOG(fmt, ...) ((void)0)
     #endif
 #endif
 
@@ -69,9 +97,11 @@ typedef struct {
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
+typedef void (*akari_timer_callback)(void);
 
 void akari_run_server(uint16_t port, akari_callback on_data);
 void akari_stop(void);
+void akari_add_timer(akari_timer_callback cb, int interval_ms);
 
 #endif
 
@@ -86,6 +116,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data);
 
 int akari_handle_client(int fd, akari_callback on_data);
 void akari_release_conn(int fd);
+void akari_check_timers(void);
 
 extern volatile int akari_running;
 
@@ -896,10 +927,72 @@ int akari_tcp_start(uint16_t port) {
 
 
 
+
+#if defined(__linux__) || defined(__APPLE__)
+    
+#elif defined(ESP_PLATFORM)
+    #include "esp_timer.h"
+#elif defined(__MBED__)
+    #include "mbed.h"
+#endif
+
+// Time Helper
+static uint64_t get_time_ms(void) {
+#if defined(__linux__) || defined(__APPLE__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)(ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+#elif defined(ESP_PLATFORM)
+    // ESP32 timer returns microseconds since boot
+    return (uint64_t)(esp_timer_get_time() / 1000ULL);
+#elif defined(__MBED__)
+    // Mbed OS Kernel uptime
+    return (uint64_t)rtos::Kernel::get_ms_count();
+#else
+    // Pure Bare-Metal Fallback (Requires user to define it)
+    return 0; 
+#endif
+}
+
+#define AKARI_MAX_TIMERS 4
+
 volatile int akari_running = 1;
+
+typedef struct {
+    akari_timer_callback cb;
+    uint64_t interval_ms;
+    uint64_t last_run_ms;
+} akari_timer;
+
+static akari_timer timer_pool[AKARI_MAX_TIMERS];
+static int timer_count = 0;
 
 static akari_connection conn_pool[AKARI_MAX_CONNECTIONS];
 static int conn_pool_initialized = 0;
+
+void akari_add_timer(akari_timer_callback cb, int interval_ms) {
+    if (timer_count < AKARI_MAX_TIMERS) {
+        timer_pool[timer_count].cb = cb;
+        timer_pool[timer_count].interval_ms = interval_ms;
+        timer_pool[timer_count].last_run_ms = 0; // Will run immediately
+        timer_count++;
+    }
+}
+
+void akari_check_timers(void) {
+    if (timer_count == 0) return;
+
+    uint64_t now = get_time_ms();
+
+    for (int i = 0; i < timer_count; i++) {
+        if (timer_pool[i].last_run_ms == 0 || 
+            (now - timer_pool[i].last_run_ms) >= timer_pool[i].interval_ms) {
+            
+            timer_pool[i].cb(); 
+            timer_pool[i].last_run_ms = now; 
+        }
+    }
+}
 
 void akari_stop(void) {
     akari_running = 0;
@@ -977,10 +1070,10 @@ void akari_run_server(uint16_t port, akari_callback on_data) {
     int srv_fd = akari_tcp_start(port);
     if (srv_fd == -1) return;
 
-#ifdef __linux__
-    akari_run_epoll(srv_fd, on_data);
-#else
+#ifdef AKARI_USE_POLL
     akari_run_poll(srv_fd, on_data);
+#else
+    akari_run_epoll(srv_fd, on_data);
 #endif
 }
 
@@ -1038,6 +1131,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 }
             }
         }
+        akari_check_timers();
     }
 
     close(epoll_fd);
@@ -1102,6 +1196,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             }
         }
+        akari_check_timers();
     }
 }
 
