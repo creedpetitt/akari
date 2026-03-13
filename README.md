@@ -26,6 +26,22 @@ By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, Akar
 
 ---
 
+## Performance
+
+Akari is engineered for extreme throughput on minimal hardware. Benchmarked on a standard Linux environment using `wrk` (single core):
+
+```text
+Running 10s test @ http://localhost:8080/akari
+  4 threads and 100 connections
+  Latency:   442.87us (Avg)
+  Req/Sec:   223,757.73
+  Transfer:  28.17MB/sec
+```
+
+*wrk -t4 -c100 -d10s http://localhost:8080/akari*
+
+---
+
 ## Installation
 
 Install the **Akari CLI** to scaffold, bundle, and manage projects with zero configuration.
