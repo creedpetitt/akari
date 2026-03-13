@@ -10,7 +10,7 @@
 
 ## Overview
 
-Akari is an industry-grade, non-blocking HTTP micro-framework written in **Pure C11**. Designed specifically for resource-constrained environments (LPC1768, ESP32, STM32) and high-performance Linux edge computing, Akari provides a modern, ergonomic developer experience without a single call to `malloc()` during the request lifecycle.
+Akari is an industry-grade, non-blocking HTTP micro-framework written in **Pure C11**. Designed specifically for resource-constrained environments (ESP32, STM32) and high-performance Linux edge computing, Akari provides a modern, ergonomic developer experience without a single call to `malloc()` during the request lifecycle.
 
 By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, Akari guarantees zero heap fragmentation and provides a predictable, fixed memory ceiling—making it the ideal choice for IoT devices.
 
@@ -31,7 +31,7 @@ By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, Akar
 Install the **Akari CLI** to scaffold, bundle, and manage projects with zero configuration.
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/creed/akari/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/creedpetitt/akari/main/scripts/install.sh | bash
 ```
 
 *Note: This script bundles the single-header library, compiles the CLI, and installs it to `/usr/local/bin`.*
@@ -149,7 +149,7 @@ Akari is architected to be hardware-agnostic by separating the **Event Engine** 
 
 *   **Linux/Unix:** Native `epoll` support for extreme requests-per-second.
 *   **ESP32:** Compatible with ESP-IDF via the `poll` engine and lwIP.
-*   **ARM Cortex (Mbed/Bare-Metal):** Optimized for 64KB RAM environments (LPC1768, STM32).
+*   **ARM Cortex (Bare-Metal/RTOS):** Optimized for 64KB RAM environments (STM32, ESP32).
 
 ---
 

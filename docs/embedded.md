@@ -11,7 +11,7 @@ Unlike standard servers, Akari's RAM usage is controlled by simple `#define` mac
 Controls the number of simultaneous TCP connections in the pre-allocated pool.
 *   **Linux/High-Load:** Set to 128-1024.
 *   **ESP32/IoT:** Set to 4-8.
-*   **Low-Memory (LPC1768):** Set to 2-4 to stay under 64KB RAM.
+*   **Low-Memory (STM32):** Set to 2-4 to stay under 64KB RAM.
 
 ### `AKARI_MAX_ROUTES`
 **Default: 16**
@@ -33,8 +33,8 @@ To run Akari on an ESP32:
 3.  Include `akari.h` and use the standard `akari_http_start` function.
 4.  Akari will automatically detect the ESP32 and use the `poll()` engine.
 
-### ARM Cortex-M (Mbed OS)
-On older Mbed chips like the LPC1768:
+### ARM Cortex-M (Bare-Metal)
+On older ARM Cortex chips like the STM32:
 1.  Ensure you have enough stack space (8KB recommended).
 2.  Set `AKARI_MAX_CONNECTIONS` to 4.
 3.  Akari will run as a high-performance web controller for your sensors.
