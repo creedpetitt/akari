@@ -50,6 +50,13 @@ Initialize your first Akari project:
 ~ cd my-server && make && ./app
 ```
 
+### Project Structure
+When you run `akari init`, the following files are generated:
+*   **`main.c`**: Your application logic and route registrations.
+*   **`akari.h`**: The self-contained, single-header library.
+*   **`index.html`**: A starter dashboard for your IoT device.
+*   **`Makefile`**: A simple build file to compile your project.
+
 ### `main.c` Implementation
 
 ```c
@@ -86,7 +93,6 @@ int main() {
 Explore the sub-guides for a deeper dive into the Akari ecosystem:
 
 *   **[Architecture & Philosophy](docs/architecture.md)**: Deep dive into the Zero-Allocation engine and Event Loop.
-*   **[CLI Reference](docs/cli.md)**: Complete guide to the `akari` command-line tool.
 *   **[Embedded Deployment](docs/embedded.md)**: Tuning memory constants for ESP32 and ARM Cortex-M.
 
 ---
