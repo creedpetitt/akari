@@ -23,10 +23,27 @@ endif
 
 TARGET = akari_server
 
+# Test/Fuzz Source Files (internal)
+FUZZ_SRCS = tests/fuzz_target.c \
+            src/akari_core.c \
+            src/akari_event.c \
+            src/akari_http.c \
+            vendor/picohttpparser/picohttpparser.c
+
 all: $(TARGET)
 
 $(TARGET):
 	$(CC) $(CFLAGS) $(INCLUDES) $(SRCS) -o $(TARGET)
+
+# AddressSanitizer + UndefinedBehaviorSanitizer
+sanitize: CFLAGS += -fsanitize=address,undefined -g -O1
+sanitize: $(TARGET)
+
+# AFL++ Fuzzing Instrumentation
+fuzz: CC = afl-gcc-fast
+fuzz: CFLAGS = -g -O2 -Iinclude -Ivendor/picohttpparser -Ivendor/jsmn -DAKARI_USE_POLL
+fuzz:
+	$(CC) $(CFLAGS) $(INCLUDES) $(FUZZ_SRCS) -o akari_fuzzer
 
 # Bundle the single-header and recompile the self-contained CLI
 release:
