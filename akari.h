@@ -54,7 +54,6 @@ int akari_tcp_listen(int fd);
 int akari_tcp_accept(int fd, struct sockaddr_in* addr);
 int akari_tcp_start(uint16_t port);
 struct sockaddr_in akari_addr_init(const char* host, uint16_t port);
-ssize_t akari_tcp_send(int fd, const void *buf, size_t size);
 ssize_t akari_tcp_recv(int fd, void *buf, size_t size);
 
 #endif
@@ -70,6 +69,10 @@ ssize_t akari_tcp_recv(int fd, void *buf, size_t size);
 
 #ifndef AKARI_REQ_BUF_SIZE
 #define AKARI_REQ_BUF_SIZE 4096
+#endif
+
+#ifndef AKARI_RES_BUF_SIZE
+#define AKARI_RES_BUF_SIZE 512
 #endif
 
 #ifndef AKARI_HEADER_TIMEOUT_MS
@@ -88,7 +91,8 @@ typedef enum {
     AKARI_CONN_IDLE,
     AKARI_CONN_READING_HEADERS,
     AKARI_CONN_READING_BODY,
-    AKARI_CONN_DISPATCH
+    AKARI_CONN_DISPATCH,
+    AKARI_CONN_SENDING
 } akari_parse_state;
 
 typedef struct {
@@ -100,12 +104,21 @@ typedef struct {
     size_t parsed_header_len;
     size_t expected_body_len;
     struct in_addr client_ip;
+    
+    char res_buf[AKARI_RES_BUF_SIZE];
+    size_t tx_len;
+    size_t tx_sent;
+    int tx_file_fd;
+    size_t tx_file_len;
+    size_t tx_file_sent;
+    int tx_keep_alive;
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
 typedef void (*akari_timer_callback)(void);
 
 akari_connection* akari_get_conn(int fd);
+void akari_handle_write(akari_connection* conn);
 void akari_run_server(uint16_t port, akari_callback on_data);
 void akari_stop(void);
 void akari_add_timer(akari_timer_callback cb, int interval_ms);
@@ -141,10 +154,6 @@ extern volatile int akari_running;
 
 #ifndef AKARI_MAX_PATH_PARAMS
 #define AKARI_MAX_PATH_PARAMS 4
-#endif
-
-#ifndef AKARI_RES_BUF_SIZE
-#define AKARI_RES_BUF_SIZE 512
 #endif
 
 #ifndef AKARI_MAX_HEADERS
@@ -201,9 +210,7 @@ typedef struct {
     akari_path_param path_params[AKARI_MAX_PATH_PARAMS];
     int num_path_params;
 
-    char res_buf[AKARI_RES_BUF_SIZE];
     size_t res_len;
-
     int keep_alive;
 
     akari_connection* _conn;
@@ -887,22 +894,6 @@ int akari_tcp_accept(int fd, struct sockaddr_in* addr) {
     return -1;
 }
 
-ssize_t akari_tcp_send(int fd, const void* buf, size_t size) {
-    size_t total_sent = 0;
-    const char *ptr = buf;
-    while (total_sent < size) {
-        ssize_t sent = send(fd, ptr + total_sent, size - total_sent, MSG_NOSIGNAL);
-        if (sent == -1) {
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                return total_sent;
-            }
-            return -1;
-        }
-        total_sent += sent;
-    }
-    return total_sent;
-}
 
 ssize_t akari_tcp_recv(int fd, void *buf, size_t size) {
     while (1) {
@@ -967,6 +958,7 @@ int akari_tcp_start(uint16_t port) {
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #if defined(__linux__) || defined(__APPLE__)
     #include <sys/time.h>
@@ -1057,6 +1049,12 @@ akari_connection* akari_get_conn(int fd) {
         c->parsed_header_len = 0;
         c->expected_body_len = 0;
         memset(&c->client_ip, 0, sizeof(c->client_ip));
+        c->tx_len = 0;
+        c->tx_sent = 0;
+        c->tx_file_fd = -1;
+        c->tx_file_len = 0;
+        c->tx_file_sent = 0;
+        c->tx_keep_alive = 0;
         return c;
     }
 
@@ -1066,6 +1064,10 @@ akari_connection* akari_get_conn(int fd) {
 void akari_release_conn(int fd) {
     for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
         if (conn_pool[i].fd == fd) {
+            if (conn_pool[i].tx_file_fd != -1) {
+                close(conn_pool[i].tx_file_fd);
+                conn_pool[i].tx_file_fd = -1;
+            }
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
@@ -1141,6 +1143,94 @@ int akari_handle_client(int fd, akari_callback on_data) {
     return 0;
 }
 
+static void close_tx_file(akari_connection* conn) {
+    if (conn->tx_file_fd != -1) {
+        close(conn->tx_file_fd);
+        conn->tx_file_fd = -1;
+    }
+}
+
+static int send_tx_buffer(akari_connection* conn) {
+    if (conn->tx_sent >= conn->tx_len) return 1;
+    
+    ssize_t sent = send(conn->fd, conn->res_buf + conn->tx_sent, 
+                        conn->tx_len - conn->tx_sent, MSG_NOSIGNAL);
+    if (sent > 0) {
+        conn->tx_sent += sent;
+        conn->last_activity_ms = get_time_ms();
+    } else if (sent == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+        return -1;
+    }
+    return conn->tx_sent >= conn->tx_len;
+}
+
+static int send_tx_file(akari_connection* conn) {
+    if (conn->tx_file_fd == -1 || conn->tx_file_sent >= conn->tx_file_len) return 1;
+    
+    char chunk[1024];
+    size_t to_read = sizeof(chunk);
+    size_t remaining = conn->tx_file_len - conn->tx_file_sent;
+    if (remaining < to_read) to_read = remaining;
+
+    ssize_t bytes_read = read(conn->tx_file_fd, chunk, to_read);
+    if (bytes_read > 0) {
+        ssize_t sent = send(conn->fd, chunk, bytes_read, MSG_NOSIGNAL);
+        if (sent > 0) {
+            conn->tx_file_sent += sent;
+            conn->last_activity_ms = get_time_ms();
+            if (sent < bytes_read) {
+                lseek(conn->tx_file_fd, sent - bytes_read, SEEK_CUR);
+            }
+        } else if (sent == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                lseek(conn->tx_file_fd, -bytes_read, SEEK_CUR);
+                return 0;
+            }
+            return -1;
+        }
+    } else if (bytes_read < 0) {
+        return -1;
+    }
+    return conn->tx_file_sent >= conn->tx_file_len;
+}
+
+void akari_handle_write(akari_connection* conn) {
+    if (conn->state != AKARI_CONN_SENDING) return;
+
+    int buf_status = send_tx_buffer(conn);
+    if (buf_status == 0) return;
+    if (buf_status == -1) goto error;
+
+    int file_status = send_tx_file(conn);
+    if (file_status == 0) return;
+    if (file_status == -1) goto error;
+
+    close_tx_file(conn);
+
+    if (conn->tx_keep_alive) {
+        size_t consumed = conn->parsed_header_len + conn->expected_body_len;
+        size_t leftover = conn->buf_len - consumed;
+        if (leftover > 0 && consumed > 0)
+            memmove(conn->buf, conn->buf + consumed, leftover);
+        conn->buf_len = leftover;
+        conn->parsed_header_len = 0;
+        conn->expected_body_len = 0;
+        conn->tx_len = 0;
+        conn->tx_sent = 0;
+        conn->state = AKARI_CONN_IDLE;
+    } else {
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+    }
+    return;
+
+error:
+    close_tx_file(conn);
+    akari_release_conn(conn->fd);
+    close(conn->fd);
+}
+
 void akari_run_server(uint16_t port, akari_callback on_data) {
     int srv_fd = akari_tcp_start(port);
     if (srv_fd == -1) return;
@@ -1160,6 +1250,9 @@ void akari_run_server(uint16_t port, akari_callback on_data) {
 #include <stdarg.h>
 #include <unistd.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 typedef struct {
     const char* method;
@@ -1236,8 +1329,10 @@ static const char* status_text(int code) {
 
 static void send_response_raw(int fd, int status, const char* content_type,
                               const void* body, size_t body_len, int keep_alive) {
-    char buf[512];
-    int n = snprintf(buf, sizeof(buf),
+    akari_connection* conn = akari_get_conn(fd);
+    if (!conn) return;
+    
+    int n = snprintf(conn->res_buf, sizeof(conn->res_buf),
         "HTTP/1.1 %d %s\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
@@ -1246,11 +1341,27 @@ static void send_response_raw(int fd, int status, const char* content_type,
         status, status_text(status),
         content_type, body_len,
         keep_alive ? "keep-alive" : "close");
+        
     if (n <= 0) return;
-    if ((size_t)n >= sizeof(buf)) n = (int)sizeof(buf) - 1;
-    akari_tcp_send(fd, buf, n);
-    if (body && body_len > 0)
-        akari_tcp_send(fd, body, body_len);
+    if ((size_t)n >= sizeof(conn->res_buf)) n = (int)sizeof(conn->res_buf) - 1;
+    
+    conn->tx_len = (size_t)n;
+    
+    if (body && body_len > 0) {
+        size_t space = sizeof(conn->res_buf) - conn->tx_len;
+        if (body_len <= space) {
+            memcpy(conn->res_buf + conn->tx_len, body, body_len);
+            conn->tx_len += body_len;
+        } else {
+            memcpy(conn->res_buf + conn->tx_len, body, space);
+            conn->tx_len += space;
+        }
+    }
+    
+    conn->tx_sent = 0;
+    conn->tx_keep_alive = keep_alive;
+    conn->state = AKARI_CONN_SENDING;
+    akari_handle_write(conn);
 }
 
 static void send_headers(akari_context* ctx, int status_code,
@@ -1274,13 +1385,7 @@ void akari_res_send(akari_context* ctx, int status_code,
 
 void akari_res_data(akari_context* ctx, int status_code,
                     const char* content_type, const void* data, size_t len) {
-    send_headers(ctx, status_code, content_type, len);
-    akari_tcp_send(ctx->_conn->fd, data, len);
-
-    if (!ctx->keep_alive) {
-        akari_release_conn(ctx->_conn->fd);
-        close(ctx->_conn->fd);
-    }
+    send_response_raw(ctx->_conn->fd, status_code, content_type, data, len, ctx->keep_alive);
 }
 
 static const char* get_mime_type(const char* filepath) {
@@ -1299,30 +1404,26 @@ static const char* get_mime_type(const char* filepath) {
 }
 
 void akari_res_file(akari_context* ctx, const char* filepath) {
-    FILE* f = fopen(filepath, "rb");
-    if (!f) {
+    int fd = open(filepath, O_RDONLY);
+    if (fd == -1) {
         akari_res_send(ctx, 404, "text/plain", "404 File Not Found");
         return;
     }
 
-    fseek(f, 0, SEEK_END);
-    size_t size = (size_t)ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    send_headers(ctx, 200, get_mime_type(filepath), size);
-
-    char buffer[4096];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0) {
-        akari_tcp_send(ctx->_conn->fd, buffer, bytes_read);
+    struct stat st;
+    if (fstat(fd, &st) == -1) {
+        close(fd);
+        akari_res_send(ctx, 500, "text/plain", "500 Internal Server Error");
+        return;
     }
 
-    if (!ctx->keep_alive) {
-        akari_release_conn(ctx->_conn->fd);
-        close(ctx->_conn->fd);
-    }
-
-    fclose(f);
+    send_headers(ctx, 200, get_mime_type(filepath), st.st_size);
+    akari_connection* conn = ctx->_conn;
+    conn->tx_file_fd = fd;
+    conn->tx_file_len = st.st_size;
+    conn->tx_file_sent = 0;
+    
+    akari_handle_write(conn);
 }
 
 void akari_http_add_route(const char* method, const char* path,
@@ -1593,14 +1694,15 @@ done:
 }
 
 void akari_printf(akari_context* ctx, const char* fmt, ...) {
+    akari_connection* conn = ctx->_conn;
     va_list args;
     va_start(args, fmt);
-    size_t avail = sizeof(ctx->res_buf) - ctx->res_len;
-    if (avail == 0) {
+    size_t avail = sizeof(conn->res_buf) - ctx->res_len - 150;
+    if (avail <= 0) {
         va_end(args);
         return;
     }
-    int n = vsnprintf(ctx->res_buf + ctx->res_len, avail, fmt, args);
+    int n = vsnprintf(conn->res_buf + ctx->res_len, avail, fmt, args);
     va_end(args);
     if (n > 0) {
         if ((size_t)n > avail - 1)
@@ -1610,13 +1712,15 @@ void akari_printf(akari_context* ctx, const char* fmt, ...) {
 }
 
 void akari_send(akari_context* ctx, int status, const char* content_type) {
-    send_headers(ctx, status, content_type, ctx->res_len);
-    akari_tcp_send(ctx->_conn->fd, ctx->res_buf, ctx->res_len);
-
-    if (!ctx->keep_alive) {
-        akari_release_conn(ctx->_conn->fd);
-        close(ctx->_conn->fd);
+    akari_connection* conn = ctx->_conn;
+    
+    size_t body_len = ctx->res_len;
+    char temp_body[AKARI_RES_BUF_SIZE];
+    if (body_len > 0) {
+        memcpy(temp_body, conn->res_buf, body_len);
     }
+    
+    send_response_raw(conn->fd, status, content_type, body_len > 0 ? temp_body : NULL, body_len, ctx->keep_alive);
 }
 
 const char* akari_get_path_param(akari_context* ctx, const char* key, size_t* out_len) {
@@ -2511,10 +2615,29 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = events[i].data.fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1) {
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-                    close(client_fd);
+                akari_connection* conn = akari_get_conn(client_fd);
+                
+                if (events[i].events & EPOLLIN) {
+                    int status = akari_handle_client(client_fd, on_data);
+                    if (status == -1) {
+                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                        close(client_fd);
+                        continue;
+                    }
+                }
+                
+                if (conn && (events[i].events & EPOLLOUT)) {
+                    akari_handle_write(conn);
+                }
+                
+                // Update epoll mask
+                if (conn && conn->fd != -1) {
+                    ev.events = EPOLLIN;
+                    if (conn->state == AKARI_CONN_SENDING) {
+                        ev.events |= EPOLLOUT;
+                    }
+                    ev.data.fd = client_fd;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_fd, &ev);
                 }
             }
         }
@@ -2579,10 +2702,26 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = fds[i].fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
-                    close(client_fd);
-                    fds[i].fd = -1;
+                akari_connection* conn = akari_get_conn(client_fd);
+                
+                if (fds[i].revents & POLLIN) {
+                    int status = akari_handle_client(client_fd, on_data);
+                    if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
+                        close(client_fd);
+                        fds[i].fd = -1;
+                        continue;
+                    }
+                }
+                
+                if (conn && (fds[i].revents & POLLOUT)) {
+                    akari_handle_write(conn);
+                }
+                
+                if (conn && conn->fd != -1) {
+                    fds[i].events = POLLIN;
+                    if (conn->state == AKARI_CONN_SENDING) {
+                        fds[i].events |= POLLOUT;
+                    }
                 }
             }
         }

@@ -12,10 +12,6 @@
 #define AKARI_MAX_PATH_PARAMS 4
 #endif
 
-#ifndef AKARI_RES_BUF_SIZE
-#define AKARI_RES_BUF_SIZE 512
-#endif
-
 #ifndef AKARI_MAX_HEADERS
 #define AKARI_MAX_HEADERS 32
 #endif
@@ -70,9 +66,7 @@ typedef struct {
     akari_path_param path_params[AKARI_MAX_PATH_PARAMS];
     int num_path_params;
 
-    char res_buf[AKARI_RES_BUF_SIZE];
     size_t res_len;
-
     int keep_alive;
 
     akari_connection* _conn;

@@ -51,10 +51,26 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = fds[i].fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
-                    close(client_fd);
-                    fds[i].fd = -1;
+                akari_connection* conn = akari_get_conn(client_fd);
+                
+                if (fds[i].revents & POLLIN) {
+                    int status = akari_handle_client(client_fd, on_data);
+                    if (status == -1 || (fds[i].revents & (POLLHUP | POLLERR))) {
+                        close(client_fd);
+                        fds[i].fd = -1;
+                        continue;
+                    }
+                }
+                
+                if (conn && (fds[i].revents & POLLOUT)) {
+                    akari_handle_write(conn);
+                }
+                
+                if (conn && conn->fd != -1) {
+                    fds[i].events = POLLIN;
+                    if (conn->state == AKARI_CONN_SENDING) {
+                        fds[i].events |= POLLOUT;
+                    }
                 }
             }
         }

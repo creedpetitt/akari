@@ -47,7 +47,6 @@ int akari_tcp_listen(int fd);
 int akari_tcp_accept(int fd, struct sockaddr_in* addr);
 int akari_tcp_start(uint16_t port);
 struct sockaddr_in akari_addr_init(const char* host, uint16_t port);
-ssize_t akari_tcp_send(int fd, const void *buf, size_t size);
 ssize_t akari_tcp_recv(int fd, void *buf, size_t size);
 
 #endif

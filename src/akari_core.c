@@ -67,22 +67,6 @@ int akari_tcp_accept(int fd, struct sockaddr_in* addr) {
     return -1;
 }
 
-ssize_t akari_tcp_send(int fd, const void* buf, size_t size) {
-    size_t total_sent = 0;
-    const char *ptr = buf;
-    while (total_sent < size) {
-        ssize_t sent = send(fd, ptr + total_sent, size - total_sent, MSG_NOSIGNAL);
-        if (sent == -1) {
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                return total_sent;
-            }
-            return -1;
-        }
-        total_sent += sent;
-    }
-    return total_sent;
-}
 
 ssize_t akari_tcp_recv(int fd, void *buf, size_t size) {
     while (1) {
