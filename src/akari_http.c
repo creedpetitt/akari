@@ -24,7 +24,8 @@ void akari_res_send(akari_context* ctx, int status_code,
     akari_res_data(ctx, status_code, content_type, body, strlen(body));
 }
 
-void akari_res_data(akari_context* ctx, int status_code,                     const char* content_type, const void* data, size_t len) {
+static void send_headers(akari_context* ctx, int status_code, 
+                        const char* content_type, size_t len) {
     char headers[256];
     int head_len = snprintf(headers, sizeof(headers),
         "HTTP/1.1 %d OK\r\n"
@@ -34,8 +35,13 @@ void akari_res_data(akari_context* ctx, int status_code,                     con
         "\r\n",
         status_code, content_type, len,
         ctx->keep_alive ? "keep-alive" : "close");
-    
+
     akari_tcp_send(ctx->_conn->fd, headers, head_len);
+}
+
+void akari_res_data(akari_context* ctx, int status_code, 
+                    const char* content_type, const void* data, size_t len) {
+    send_headers(ctx, status_code, content_type, len);
     akari_tcp_send(ctx->_conn->fd, data, len);
 
     if (!ctx->keep_alive) {
@@ -47,7 +53,7 @@ void akari_res_data(akari_context* ctx, int status_code,                     con
 static const char* get_mime_type(const char* filepath) {
     const char* ext = strrchr(filepath, '.');
     if (!ext) return "application/octet-stream";
-    
+
     if (strcmp(ext, ".html") == 0) return "text/html";
     if (strcmp(ext, ".css") == 0) return "text/css";
     if (strcmp(ext, ".js") == 0) return "application/javascript";
@@ -55,7 +61,7 @@ static const char* get_mime_type(const char* filepath) {
     if (strcmp(ext, ".png") == 0) return "image/png";
     if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0) return "image/jpeg";
     if (strcmp(ext, ".txt") == 0) return "text/plain";
-    
+
     return "application/octet-stream";
 }
 
@@ -67,20 +73,10 @@ void akari_res_file(akari_context* ctx, const char* filepath) {
     }
 
     fseek(f, 0, SEEK_END);
-    long size = ftell(f);
+    size_t size = (size_t)ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    char headers[256];
-    int len = snprintf(headers, sizeof(headers), 
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %ld\r\n"
-        "Connection: %s\r\n"
-        "\r\n", 
-        get_mime_type(filepath), size,
-        ctx->keep_alive ? "keep-alive" : "close");
-        
-    akari_tcp_send(ctx->_conn->fd, headers, len);
+    send_headers(ctx, 200, get_mime_type(filepath), size);
 
     char buffer[4096];
     size_t bytes_read;
