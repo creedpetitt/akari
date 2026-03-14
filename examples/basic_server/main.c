@@ -7,8 +7,7 @@ void handle_home(akari_context* ctx) {
 }
 
 void handle_api(akari_context* ctx) {
-    printf("Someone visited the API!\n");
-    akari_res_send(ctx, 200, "application/json", "{\"status\": \"online\", \"chip\": \"LPC1768\"}");
+    akari_res_send(ctx, 200, "application/json", "{\"status\": \"online\", \"chip\": \"STM32\"}");
 }
 
 void handle_user(akari_context* ctx) {
