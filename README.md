@@ -31,16 +31,16 @@ By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, Akar
 Akari is engineered for extreme throughput on minimal hardware. Benchmarked on a standard Linux environment using `wrk` (single core):
 
 ```text
-Running 10s test @ http://localhost:8080/akari
+akari git:(main) ✗ wrk -t4 -c100 -d10s http://localhost:8080/api
+Running 10s test @ http://localhost:8080/api
   4 threads and 100 connections
-  Latency:   442.87us (Avg)
-  Req/Sec:   223,757.73
-  Transfer:  28.17MB/sec
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   428.76us  322.60us  25.57ms   99.66%
+    Req/Sec    58.82k     4.78k   70.67k    65.01%
+  2358010 requests in 10.10s, 247.37MB read
+Requests/sec: 233469.02
+Transfer/sec:     24.49MB
 ```
-
-*wrk -t4 -c100 -d10s http://localhost:8080/akari*
-
----
 
 ## Installation
 
