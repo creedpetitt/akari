@@ -18,9 +18,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
     while (akari_running) {
         int ready = poll(fds, nfds, 100);
         if (ready == -1) {
-            if (akari_running) {
-                AKARI_LOG("poll failed");
-            }
+            if (akari_running) AKARI_LOG("poll failed");
             break;
         }
 
@@ -28,8 +26,13 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
             if (fds[i].revents == 0) continue;
 
             if (fds[i].fd == srv_fd) {
-                int client_fd = akari_tcp_accept(srv_fd, NULL);
+                struct sockaddr_in client_addr;
+                int client_fd = akari_tcp_accept(srv_fd, &client_addr);
                 if (client_fd != -1) {
+                    akari_connection* conn = akari_get_conn(client_fd);
+                    if (conn) {
+                        conn->client_ip = client_addr.sin_addr;
+                    }
                     int added = 0;
                     for (int j = 1; j < AKARI_MAX_CONNECTIONS + 1; j++) {
                         if (fds[j].fd == -1) {
@@ -42,6 +45,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                     }
                     if (!added) {
                         AKARI_LOG("poll fds full");
+                        akari_release_conn(client_fd);
                         close(client_fd);
                     }
                 }
@@ -55,5 +59,6 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
             }
         }
         akari_check_timers();
+        akari_sweep_timeouts();
     }
 }

@@ -1,13 +1,14 @@
-#include "akari_core.h" 
+#include "akari_core.h"
 #include "akari_internal.h"
 #include "picohttpparser.h"
 #include "jsmn.h"
 
-#include <string.h> 
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <time.h>
 #include "akari_http.h"
 
 typedef struct {
@@ -19,27 +20,109 @@ typedef struct {
 static akari_route route_table[AKARI_MAX_ROUTES];
 static int route_count = 0;
 
-void akari_res_send(akari_context* ctx, int status_code, 
-    const char* content_type, const char* body) {
-    akari_res_data(ctx, status_code, content_type, body, strlen(body));
+typedef struct {
+    uint32_t ip;
+    uint32_t tokens;
+    uint64_t last_refill_ms;
+} akari_rate_entry;
+
+static akari_rate_entry rate_table[AKARI_RATE_BUCKETS];
+
+static uint64_t akari_time_ms(void) {
+#if defined(__linux__) || defined(__APPLE__)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return ((uint64_t)ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+#elif defined(ESP_PLATFORM)
+    return (uint64_t)(esp_timer_get_time() / 1000ULL);
+#else
+    return 0;
+#endif
 }
 
-static void send_headers(akari_context* ctx, int status_code, 
-                        const char* content_type, size_t len) {
-    char headers[256];
-    int head_len = snprintf(headers, sizeof(headers),
-        "HTTP/1.1 %d OK\r\n"
+static int rate_limit_check(uint32_t ip) {
+    uint64_t now = akari_time_ms();
+    if (now == 0) return 1;
+
+    uint32_t hash = ip % AKARI_RATE_BUCKETS;
+    akari_rate_entry* e = &rate_table[hash];
+
+    if (e->ip != ip) {
+        e->ip = ip;
+        e->tokens = AKARI_RATE_BURST;
+        e->last_refill_ms = now;
+    }
+
+    uint64_t elapsed = now - e->last_refill_ms;
+    if (elapsed > 0) {
+        uint32_t refill = (uint32_t)((elapsed * AKARI_RATE_REFILL_PER_SEC) / 1000);
+        if (refill > 0) {
+            e->tokens += refill;
+            if (e->tokens > AKARI_RATE_BURST)
+                e->tokens = AKARI_RATE_BURST;
+            e->last_refill_ms = now;
+        }
+    }
+
+    if (e->tokens == 0) return 0;
+    e->tokens--;
+    return 1;
+}
+
+static const char* status_text(int code) {
+    switch (code) {
+    case 200: return "OK";
+    case 400: return "Bad Request";
+    case 404: return "Not Found";
+    case 408: return "Request Timeout";
+    case 413: return "Content Too Large";
+    case 414: return "URI Too Long";
+    case 429: return "Too Many Requests";
+    case 431: return "Request Header Fields Too Large";
+    case 501: return "Not Implemented";
+    default:  return "OK";
+    }
+}
+
+static void send_response_raw(int fd, int status, const char* content_type,
+                              const void* body, size_t body_len, int keep_alive) {
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf),
+        "HTTP/1.1 %d %s\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: %s\r\n"
         "\r\n",
-        status_code, content_type, len,
-        ctx->keep_alive ? "keep-alive" : "close");
-
-    akari_tcp_send(ctx->_conn->fd, headers, head_len);
+        status, status_text(status),
+        content_type, body_len,
+        keep_alive ? "keep-alive" : "close");
+    if (n <= 0) return;
+    if ((size_t)n >= sizeof(buf)) n = (int)sizeof(buf) - 1;
+    akari_tcp_send(fd, buf, n);
+    if (body && body_len > 0)
+        akari_tcp_send(fd, body, body_len);
 }
 
-void akari_res_data(akari_context* ctx, int status_code, 
+static void send_headers(akari_context* ctx, int status_code,
+                         const char* content_type, size_t len) {
+    send_response_raw(ctx->_conn->fd, status_code, content_type,
+                      NULL, len, ctx->keep_alive);
+}
+
+void akari_send_error(int fd, int status, int keep_alive) {
+    char body[64];
+    int n = snprintf(body, sizeof(body), "%d %s", status, status_text(status));
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(body)) n = (int)sizeof(body) - 1;
+    send_response_raw(fd, status, "text/plain", body, n, keep_alive);
+}
+
+void akari_res_send(akari_context* ctx, int status_code,
+                    const char* content_type, const char* body) {
+    akari_res_data(ctx, status_code, content_type, body, strlen(body));
+}
+
+void akari_res_data(akari_context* ctx, int status_code,
                     const char* content_type, const void* data, size_t len) {
     send_headers(ctx, status_code, content_type, len);
     akari_tcp_send(ctx->_conn->fd, data, len);
@@ -92,24 +175,22 @@ void akari_res_file(akari_context* ctx, const char* filepath) {
     fclose(f);
 }
 
-void akari_http_add_route(const char* method, const char* path, 
-    akari_route_handler handler) {
-
+void akari_http_add_route(const char* method, const char* path,
+                          akari_route_handler handler) {
     if (route_count >= AKARI_MAX_ROUTES) {
         AKARI_LOG("too many routes, consider changing the AKARI_MAX_ROUTES macro");
         return;
     }
-        
     route_table[route_count].method = method;
     route_table[route_count].path = path;
     route_table[route_count].handler = handler;
-    route_count ++;
+    route_count++;
 }
 
 static int match_route(akari_context* ctx, const char* route_path) {
     const char* req_p = ctx->path;
-    const char* req_end = ctx->path + ctx->path_len; 
-    
+    const char* req_end = ctx->path + ctx->path_len;
+
     for (const char* p = req_p; p < req_end; p++) {
         if (*p == '?') {
             req_end = p;
@@ -122,7 +203,7 @@ static int match_route(akari_context* ctx, const char* route_path) {
 
     while (req_p < req_end && *rt_p != '\0') {
         if (*rt_p == ':') {
-            rt_p++; 
+            rt_p++;
             const char* key_start = rt_p;
             while (*rt_p != '/' && *rt_p != '\0') rt_p++;
             size_t key_len = rt_p - key_start;
@@ -142,7 +223,7 @@ static int match_route(akari_context* ctx, const char* route_path) {
             req_p++;
             rt_p++;
         } else {
-            return 0; 
+            return 0;
         }
     }
 
@@ -152,23 +233,172 @@ static int match_route(akari_context* ctx, const char* route_path) {
     return (req_p == req_end && *rt_p == '\0');
 }
 
+static int parse_content_length(struct phr_header* headers, size_t num_headers,
+                                size_t* out_len) {
+    int found = 0;
+    *out_len = 0;
+
+    for (size_t i = 0; i < num_headers; i++) {
+        if (headers[i].name_len == 14 &&
+            strncasecmp(headers[i].name, "content-length", 14) == 0) {
+
+            size_t val = 0;
+            for (size_t j = 0; j < headers[i].value_len; j++) {
+                char c = headers[i].value[j];
+                if (c < '0' || c > '9') return -1;
+                size_t next = val * 10 + (c - '0');
+                if (next < val) return -1;
+                val = next;
+            }
+
+            if (found && val != *out_len) return -1;
+            *out_len = val;
+            found = 1;
+        }
+    }
+
+    return found;
+}
+
+static int has_transfer_encoding(struct phr_header* headers, size_t num_headers) {
+    for (size_t i = 0; i < num_headers; i++) {
+        if (headers[i].name_len == 17 &&
+            strncasecmp(headers[i].name, "transfer-encoding", 17) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int detect_keep_alive(int minor_version, struct phr_header* headers,
+                             size_t num_headers) {
+    int default_ka = (minor_version >= 1) ? 1 : 0;
+
+    for (size_t i = 0; i < num_headers; i++) {
+        if (headers[i].name_len == 10 &&
+            strncasecmp(headers[i].name, "connection", 10) == 0) {
+            if (headers[i].value_len == 5 &&
+                strncasecmp(headers[i].value, "close", 5) == 0)
+                return 0;
+            if (headers[i].value_len == 10 &&
+                strncasecmp(headers[i].value, "keep-alive", 10) == 0)
+                return 1;
+        }
+    }
+    return default_ka;
+}
+
 void akari_handle_http(akari_connection* conn) {
     const char *method, *path;
     size_t method_len, path_len;
     int minor_version;
-    struct phr_header headers[32]; 
-    size_t num_headers = 32;
+    struct phr_header headers[AKARI_MAX_HEADERS];
+    size_t num_headers = AKARI_MAX_HEADERS;
 
-    int pret = phr_parse_request(conn->buf, conn->buf_len, 
-                                 &method, &method_len, 
-                                 &path, &path_len, 
-                                 &minor_version, 
-                                 headers, &num_headers, 0);
+    int pret = phr_parse_request(conn->buf, conn->buf_len,
+                                 &method, &method_len,
+                                 &path, &path_len,
+                                 &minor_version,
+                                 headers, &num_headers,
+                                 conn->parsed_header_len);
 
-    if (pret <= 0) {
-        conn->buf_len = 0; 
-        return; 
+    if (pret == -2) {
+        conn->parsed_header_len = conn->buf_len;
+        conn->state = AKARI_CONN_READING_HEADERS;
+        if (conn->buf_len > AKARI_MAX_HEADER_BYTES) {
+            akari_send_error(conn->fd, 431, 0);
+            akari_release_conn(conn->fd);
+            close(conn->fd);
+        }
+        return;
     }
+
+    if (pret == -1) {
+        akari_send_error(conn->fd, 400, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if ((size_t)pret > AKARI_MAX_HEADER_BYTES) {
+        akari_send_error(conn->fd, 431, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if (path_len > AKARI_MAX_PATH_LEN) {
+        akari_send_error(conn->fd, 414, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if (method_len > AKARI_MAX_METHOD_LEN) {
+        akari_send_error(conn->fd, 400, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if (has_transfer_encoding(headers, num_headers)) {
+        akari_send_error(conn->fd, 501, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    size_t expected_body = 0;
+    int cl_result = parse_content_length(headers, num_headers, &expected_body);
+
+    if (cl_result == -1) {
+        akari_send_error(conn->fd, 400, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if (expected_body > AKARI_MAX_BODY_BYTES) {
+        akari_send_error(conn->fd, 413, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    if ((size_t)pret + expected_body > AKARI_REQ_BUF_SIZE) {
+        akari_send_error(conn->fd, 413, 0);
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+        return;
+    }
+
+    size_t body_received = conn->buf_len - pret;
+    if (body_received < expected_body) {
+        conn->state = AKARI_CONN_READING_BODY;
+        conn->parsed_header_len = pret;
+        conn->expected_body_len = expected_body;
+        return;
+    }
+
+    if (!rate_limit_check(conn->client_ip.s_addr)) {
+        int ka = detect_keep_alive(minor_version, headers, num_headers);
+        akari_send_error(conn->fd, 429, ka);
+        if (!ka) {
+            akari_release_conn(conn->fd);
+            close(conn->fd);
+        } else {
+            size_t consumed = pret + expected_body;
+            size_t leftover = conn->buf_len - consumed;
+            if (leftover > 0)
+                memmove(conn->buf, conn->buf + consumed, leftover);
+            conn->buf_len = leftover;
+            conn->parsed_header_len = 0;
+            conn->expected_body_len = 0;
+            conn->state = AKARI_CONN_IDLE;
+        }
+        return;
+    }
+
+    int keep_alive = detect_keep_alive(minor_version, headers, num_headers);
 
     akari_context ctx;
     ctx.method = method;
@@ -178,48 +408,71 @@ void akari_handle_http(akari_connection* conn) {
     ctx.headers = headers;
     ctx.num_headers = num_headers;
     ctx.body = conn->buf + pret;
-    ctx.body_len = conn->buf_len - pret;
+    ctx.body_len = expected_body;
     ctx.num_path_params = 0;
     ctx.res_len = 0;
-    ctx.keep_alive = 1;
-    ctx._conn = conn; 
+    ctx.keep_alive = keep_alive;
+    ctx._conn = conn;
 
-    for (size_t i = 0; i < ctx.num_headers; i++) {
-        if (ctx.headers[i].name_len == 10 && 
-            strncasecmp(ctx.headers[i].name, "connection", 10) == 0) {
-            if (ctx.headers[i].value_len == 10 && 
-                strncasecmp(ctx.headers[i].value, "keep-alive", 10) == 0) {
-                ctx.keep_alive = 1;
-            }
-            break;
-        }
-    }
+    conn->state = AKARI_CONN_DISPATCH;
 
     for (int i = 0; i < route_count; i++) {
-        if (ctx.method_len != strlen(route_table[i].method) || 
-            strncmp(ctx.method, route_table[i].method, ctx.method_len) != 0) {
+        if (ctx.method_len != strlen(route_table[i].method) ||
+            strncmp(ctx.method, route_table[i].method, ctx.method_len) != 0)
             continue;
-        }
 
         if (match_route(&ctx, route_table[i].path)) {
             route_table[i].handler(&ctx);
-            if (ctx.keep_alive) {
-                conn->buf_len = 0; 
-            }
-            return;
+            goto done;
         }
     }
 
     akari_res_send(&ctx, 404, "text/plain", "404 Route Not Found");
+
+done:
     if (ctx.keep_alive) {
-        conn->buf_len = 0;
+        size_t consumed = pret + expected_body;
+        size_t leftover = conn->buf_len - consumed;
+        if (leftover > 0)
+            memmove(conn->buf, conn->buf + consumed, leftover);
+        conn->buf_len = leftover;
+        conn->parsed_header_len = 0;
+        conn->expected_body_len = 0;
+        conn->state = AKARI_CONN_IDLE;
+    }
+}
+
+void akari_printf(akari_context* ctx, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    size_t avail = sizeof(ctx->res_buf) - ctx->res_len;
+    if (avail == 0) {
+        va_end(args);
+        return;
+    }
+    int n = vsnprintf(ctx->res_buf + ctx->res_len, avail, fmt, args);
+    va_end(args);
+    if (n > 0) {
+        if ((size_t)n > avail - 1)
+            n = (int)(avail - 1);
+        ctx->res_len += n;
+    }
+}
+
+void akari_send(akari_context* ctx, int status, const char* content_type) {
+    send_headers(ctx, status, content_type, ctx->res_len);
+    akari_tcp_send(ctx->_conn->fd, ctx->res_buf, ctx->res_len);
+
+    if (!ctx->keep_alive) {
+        akari_release_conn(ctx->_conn->fd);
+        close(ctx->_conn->fd);
     }
 }
 
 const char* akari_get_path_param(akari_context* ctx, const char* key, size_t* out_len) {
     size_t target_len = strlen(key);
     for (int i = 0; i < ctx->num_path_params; i++) {
-        if (ctx->path_params[i].key_len == target_len && 
+        if (ctx->path_params[i].key_len == target_len &&
             strncmp(ctx->path_params[i].key, key, target_len) == 0) {
             *out_len = ctx->path_params[i].val_len;
             return ctx->path_params[i].val;
@@ -255,7 +508,7 @@ const char* akari_get_query_param(akari_context* ctx, const char* key, size_t* o
                 return val_start;
             } else {
                 *out_len = 0;
-                return eq; 
+                return eq;
             }
         }
         current = eq;
@@ -268,41 +521,7 @@ const char* akari_get_query_param(akari_context* ctx, const char* key, size_t* o
 const char* akari_query_str(akari_context* ctx, const char* key, const char* def) {
     size_t len = 0;
     const char* val = akari_get_query_param(ctx, key, &len);
-    return val ? val : def; 
-}
-
-void akari_printf(akari_context* ctx, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    if (ctx->res_len >= sizeof(ctx->res_buf)) {
-        va_end(args);
-        return;
-    }
-    int n = vsnprintf(ctx->res_buf + ctx->res_len, 
-                      sizeof(ctx->res_buf) - ctx->res_len, 
-                      fmt, args);
-    va_end(args);
-    if (n > 0) ctx->res_len += n;
-}
-
-void akari_send(akari_context* ctx, int status, const char* content_type) {
-    char headers[256];
-    int head_len = snprintf(headers, sizeof(headers),
-        "HTTP/1.1 %d OK\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: %s\r\n"
-        "\r\n",
-        status, content_type, ctx->res_len,
-        ctx->keep_alive ? "keep-alive" : "close");
-    
-    akari_tcp_send(ctx->_conn->fd, headers, head_len);
-    akari_tcp_send(ctx->_conn->fd, ctx->res_buf, ctx->res_len);
-
-    if (!ctx->keep_alive) {
-        akari_release_conn(ctx->_conn->fd);
-        close(ctx->_conn->fd);
-    }
+    return val ? val : def;
 }
 
 int akari_param_to_int(akari_context* ctx, const char* key) {
@@ -316,10 +535,12 @@ int akari_param_to_int(akari_context* ctx, const char* key) {
     return atoi(buf);
 }
 
-const char* find_json_token(const char* json, jsmntok_t* tokens, int num_tokens, const char* key, size_t* out_len) {
+const char* find_json_token(const char* json, jsmntok_t* tokens, int num_tokens,
+                            const char* key, size_t* out_len) {
     size_t key_len = strlen(key);
     for (int i = 1; i < num_tokens - 1; i++) {
-        if (tokens[i].type == JSMN_STRING && (size_t)(tokens[i].end - tokens[i].start) == key_len &&
+        if (tokens[i].type == JSMN_STRING &&
+            (size_t)(tokens[i].end - tokens[i].start) == key_len &&
             strncmp(json + tokens[i].start, key, key_len) == 0) {
             *out_len = tokens[i+1].end - tokens[i+1].start;
             return json + tokens[i+1].start;
@@ -331,7 +552,7 @@ const char* find_json_token(const char* json, jsmntok_t* tokens, int num_tokens,
 const char* akari_json_get_string(akari_context* ctx, const char* key, size_t* out_len) {
     if (!ctx->body || ctx->body_len == 0) return NULL;
     jsmn_parser p;
-    jsmntok_t t[64]; 
+    jsmntok_t t[64];
     jsmn_init(&p);
     int r = jsmn_parse(&p, ctx->body, ctx->body_len, t, sizeof(t) / sizeof(t[0]));
     if (r < 0 || t[0].type != JSMN_OBJECT) return NULL;
