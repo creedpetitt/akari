@@ -21,24 +21,22 @@ static int route_count = 0;
 
 void akari_res_send(akari_context* ctx, int status_code, 
     const char* content_type, const char* body) {
-    
-    char response_buffer[1024];
-    size_t body_len = strlen(body);
+    akari_res_data(ctx, status_code, content_type, body, strlen(body));
+}
 
-    int response_len = snprintf(response_buffer, sizeof(response_buffer),
+void akari_res_data(akari_context* ctx, int status_code,                     const char* content_type, const void* data, size_t len) {
+    char headers[256];
+    int head_len = snprintf(headers, sizeof(headers),
         "HTTP/1.1 %d OK\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: %s\r\n"
-        "\r\n"
-        "%s",
-        status_code, content_type, body_len, 
-        ctx->keep_alive ? "keep-alive" : "close",
-        body);
+        "\r\n",
+        status_code, content_type, len,
+        ctx->keep_alive ? "keep-alive" : "close");
     
-    if (response_len > 0) {
-        akari_tcp_send(ctx->_conn->fd, response_buffer, response_len);
-    } 
+    akari_tcp_send(ctx->_conn->fd, headers, head_len);
+    akari_tcp_send(ctx->_conn->fd, data, len);
 
     if (!ctx->keep_alive) {
         akari_release_conn(ctx->_conn->fd);

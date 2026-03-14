@@ -70,6 +70,9 @@ size_t akari_url_decode(char* dest, const char* src, size_t src_len);
 void akari_res_send(akari_context* ctx, int status_code, 
                     const char* content_type, const char* body);
 
+void akari_res_data(akari_context* ctx, int status_code, 
+                    const char* content_type, const void* data, size_t len);
+
 void akari_res_file(akari_context* ctx, const char* filepath);
 
 void akari_http_add_route(const char* method, 
