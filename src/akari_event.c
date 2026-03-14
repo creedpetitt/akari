@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #if defined(__linux__) || defined(__APPLE__)
     #include <sys/time.h>
@@ -93,6 +94,12 @@ akari_connection* akari_get_conn(int fd) {
         c->parsed_header_len = 0;
         c->expected_body_len = 0;
         memset(&c->client_ip, 0, sizeof(c->client_ip));
+        c->tx_len = 0;
+        c->tx_sent = 0;
+        c->tx_file_fd = -1;
+        c->tx_file_len = 0;
+        c->tx_file_sent = 0;
+        c->tx_keep_alive = 0;
         return c;
     }
 
@@ -102,6 +109,10 @@ akari_connection* akari_get_conn(int fd) {
 void akari_release_conn(int fd) {
     for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
         if (conn_pool[i].fd == fd) {
+            if (conn_pool[i].tx_file_fd != -1) {
+                close(conn_pool[i].tx_file_fd);
+                conn_pool[i].tx_file_fd = -1;
+            }
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
@@ -175,6 +186,94 @@ int akari_handle_client(int fd, akari_callback on_data) {
         return -1;
     }
     return 0;
+}
+
+static void close_tx_file(akari_connection* conn) {
+    if (conn->tx_file_fd != -1) {
+        close(conn->tx_file_fd);
+        conn->tx_file_fd = -1;
+    }
+}
+
+static int send_tx_buffer(akari_connection* conn) {
+    if (conn->tx_sent >= conn->tx_len) return 1;
+    
+    ssize_t sent = send(conn->fd, conn->res_buf + conn->tx_sent, 
+                        conn->tx_len - conn->tx_sent, MSG_NOSIGNAL);
+    if (sent > 0) {
+        conn->tx_sent += sent;
+        conn->last_activity_ms = get_time_ms();
+    } else if (sent == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+        return -1;
+    }
+    return conn->tx_sent >= conn->tx_len;
+}
+
+static int send_tx_file(akari_connection* conn) {
+    if (conn->tx_file_fd == -1 || conn->tx_file_sent >= conn->tx_file_len) return 1;
+    
+    char chunk[1024];
+    size_t to_read = sizeof(chunk);
+    size_t remaining = conn->tx_file_len - conn->tx_file_sent;
+    if (remaining < to_read) to_read = remaining;
+
+    ssize_t bytes_read = read(conn->tx_file_fd, chunk, to_read);
+    if (bytes_read > 0) {
+        ssize_t sent = send(conn->fd, chunk, bytes_read, MSG_NOSIGNAL);
+        if (sent > 0) {
+            conn->tx_file_sent += sent;
+            conn->last_activity_ms = get_time_ms();
+            if (sent < bytes_read) {
+                lseek(conn->tx_file_fd, sent - bytes_read, SEEK_CUR);
+            }
+        } else if (sent == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                lseek(conn->tx_file_fd, -bytes_read, SEEK_CUR);
+                return 0;
+            }
+            return -1;
+        }
+    } else if (bytes_read < 0) {
+        return -1;
+    }
+    return conn->tx_file_sent >= conn->tx_file_len;
+}
+
+void akari_handle_write(akari_connection* conn) {
+    if (conn->state != AKARI_CONN_SENDING) return;
+
+    int buf_status = send_tx_buffer(conn);
+    if (buf_status == 0) return;
+    if (buf_status == -1) goto error;
+
+    int file_status = send_tx_file(conn);
+    if (file_status == 0) return;
+    if (file_status == -1) goto error;
+
+    close_tx_file(conn);
+
+    if (conn->tx_keep_alive) {
+        size_t consumed = conn->parsed_header_len + conn->expected_body_len;
+        size_t leftover = conn->buf_len - consumed;
+        if (leftover > 0 && consumed > 0)
+            memmove(conn->buf, conn->buf + consumed, leftover);
+        conn->buf_len = leftover;
+        conn->parsed_header_len = 0;
+        conn->expected_body_len = 0;
+        conn->tx_len = 0;
+        conn->tx_sent = 0;
+        conn->state = AKARI_CONN_IDLE;
+    } else {
+        akari_release_conn(conn->fd);
+        close(conn->fd);
+    }
+    return;
+
+error:
+    close_tx_file(conn);
+    akari_release_conn(conn->fd);
+    close(conn->fd);
 }
 
 void akari_run_server(uint16_t port, akari_callback on_data) {

@@ -46,10 +46,29 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = events[i].data.fd;
-                int status = akari_handle_client(client_fd, on_data);
-                if (status == -1) {
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-                    close(client_fd);
+                akari_connection* conn = akari_get_conn(client_fd);
+                
+                if (events[i].events & EPOLLIN) {
+                    int status = akari_handle_client(client_fd, on_data);
+                    if (status == -1) {
+                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                        close(client_fd);
+                        continue;
+                    }
+                }
+                
+                if (conn && (events[i].events & EPOLLOUT)) {
+                    akari_handle_write(conn);
+                }
+                
+                // Update epoll mask
+                if (conn && conn->fd != -1) {
+                    ev.events = EPOLLIN;
+                    if (conn->state == AKARI_CONN_SENDING) {
+                        ev.events |= EPOLLOUT;
+                    }
+                    ev.data.fd = client_fd;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_fd, &ev);
                 }
             }
         }
