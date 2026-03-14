@@ -15,17 +15,16 @@ int main() {
     akari_http_add_route("POST", "/data", mock_handler);
     akari_http_add_route("GET", "/user/:id", mock_handler);
 
-    // AFL++ feeds input via stdin
     char buf[8192];
     ssize_t n = read(0, buf, sizeof(buf));
     if (n <= 0) return 0;
 
-    // Create a mock connection
     akari_connection conn;
     memset(&conn, 0, sizeof(conn));
-    conn.fd = -1; // No actual socket
-    memcpy(conn.buf, buf, n);
-    conn.buf_len = n;
+    conn.fd = -1;
+    size_t copy_len = (size_t)n < sizeof(conn.buf) ? (size_t)n : sizeof(conn.buf);
+    memcpy(conn.buf, buf, copy_len);
+    conn.buf_len = copy_len;
 
     // Since we don't have a real event loop, we manually call the parser logic.
     // We need to declare it as it's static/internal usually.

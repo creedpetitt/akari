@@ -50,7 +50,10 @@ release:
 	python3 scripts/gen_single_header.py
 	$(CC) -O2 tools/akari_cli.c -o akari
 
+security-test:
+	bash tests/security/run_tests.sh
+
 clean:
 	rm -f $(TARGET)
 
-.PHONY: all clean
+.PHONY: all clean security-test

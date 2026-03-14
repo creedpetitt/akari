@@ -16,6 +16,38 @@
 #define AKARI_RES_BUF_SIZE 512
 #endif
 
+#ifndef AKARI_MAX_HEADERS
+#define AKARI_MAX_HEADERS 32
+#endif
+
+#ifndef AKARI_MAX_HEADER_BYTES
+#define AKARI_MAX_HEADER_BYTES 8192
+#endif
+
+#ifndef AKARI_MAX_BODY_BYTES
+#define AKARI_MAX_BODY_BYTES (1024 * 1024)
+#endif
+
+#ifndef AKARI_MAX_PATH_LEN
+#define AKARI_MAX_PATH_LEN 2048
+#endif
+
+#ifndef AKARI_MAX_METHOD_LEN
+#define AKARI_MAX_METHOD_LEN 8
+#endif
+
+#ifndef AKARI_RATE_BUCKETS
+#define AKARI_RATE_BUCKETS 64
+#endif
+
+#ifndef AKARI_RATE_REFILL_PER_SEC
+#define AKARI_RATE_REFILL_PER_SEC 50
+#endif
+
+#ifndef AKARI_RATE_BURST
+#define AKARI_RATE_BURST 100
+#endif
+
 typedef struct {
     const char* key;
     size_t key_len;
