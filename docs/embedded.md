@@ -1,26 +1,30 @@
 # Akari Embedded Deployment
 
-Akari is designed from the ground up to be "Tunable" for real-time operating systems (RTOS) and bare-metal ARM Cortex-M microcontrollers.
+Akari is designed to be compatible for real-time operating systems (RTOS) and bare-metal ARM Cortex-M microcontrollers.
 
-## Memory Tuning
+## Hardware Tuning 
 
-Unlike standard servers, Akari's RAM usage is controlled by simple `#define` macros. You can set these in your `main.c` or via your compiler flags (e.g., `-DAKARI_MAX_CONNECTIONS=4`).
+Akari can be configured for your specific hardware. Use the table below to configure your compiler flags (e.g., `-DAKARI_MAX_CONNECTIONS=4`).
 
-### `AKARI_MAX_CONNECTIONS`
-**Default: 8**
-Controls the number of simultaneous TCP connections in the pre-allocated pool.
-*   **Linux/High-Load:** Set to 128-1024.
-*   **ESP32/IoT:** Set to 4-8.
-*   **Low-Memory (STM32):** Set to 2-4 to stay under 64KB RAM.
+| Hardware Profile | `AKARI_MAX_CONNECTIONS` | `AKARI_RES_BUF_SIZE` | Ideal Target |
+| :--- | :---: | :---: | :--- |
+| **Tiny Core** | 2 - 4 | 256 bytes | STM32F1, 64KB RAM |
+| **IoT Standard** | 8 - 16 | 1 KB | ESP32, 520KB RAM |
+| **Edge Gateway** | 64 - 128 | 4 KB | Raspberry Pi, BeagleBone |
+| **High-Perf** | 1024+ | 8 KB+ | Linux Server / Benchmark |
 
-### `AKARI_MAX_ROUTES`
+### Tuning Macros
+
+#### `AKARI_MAX_CONNECTIONS`
+Controls the number of simultaneous TCP connections in the pre-allocated pool. Each connection costs approximately 4KB of static RAM (depending on `AKARI_BUF_SIZE`).
+
+#### `AKARI_MAX_ROUTES`
 **Default: 16**
-The maximum number of `AKARI_GET` or `AKARI_POST` handlers you can register. 
-*   Increasing this only costs 192 bytes of RAM per 16 routes.
+The maximum number of `AKARI_GET` or `AKARI_POST` handlers. Increasing this is extremely cheap (~192 bytes per 16 routes).
 
-### `AKARI_RES_BUF_SIZE`
+#### `AKARI_RES_BUF_SIZE`
 **Default: 512**
-The size of the stack buffer used by `akari_printf`. This buffer is allocated **on the stack** within the `akari_context` during a request. It does not stay in RAM permanently.
+The size of the stack buffer used by `akari_printf`. This lives on the stack *only* during the request.
 
 ---
 
