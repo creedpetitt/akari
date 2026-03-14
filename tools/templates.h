@@ -59,9 +59,13 @@ const char* ESP_CMAKE_MAIN_TEMPLATE =
 "                    INCLUDE_DIRS \".\"\n"
 "                    EMBED_FILES \"index.html\")\n";
 
+const char* ESP_COMPONENT_YML_TEMPLATE = 
+"dependencies:\n"
+"  akari:\n"
+"    git: https://github.com/creedpetitt/akari.git\n";
+
 const char* ESP_MAIN_C_TEMPLATE = 
-"#define AKARI_IMPLEMENTATION\n"
-"#include \"akari.h\"\n"
+"#include \"akari_http.h\"\n"
 "#include \"esp_wifi.h\"\n"
 "#include \"esp_event.h\"\n"
 "#include \"nvs_flash.h\"\n"

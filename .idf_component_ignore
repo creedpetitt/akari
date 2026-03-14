@@ -1,0 +1,10 @@
+# Ignore these folders when pulled as an ESP-IDF component
+docs/
+scripts/
+tools/
+examples/
+.vscode/
+.git/
+README.md
+Makefile
+akari.h

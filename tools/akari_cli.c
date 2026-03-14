@@ -54,9 +54,9 @@ int do_init(const char* name, int is_esp32) {
         }
         
         write_file("main/CMakeLists.txt", ESP_CMAKE_MAIN_TEMPLATE);
+        write_file("main/idf_component.yml", ESP_COMPONENT_YML_TEMPLATE);
         write_file("main/main.c", ESP_MAIN_C_TEMPLATE);
         write_file("main/index.html", INDEX_HTML_TEMPLATE);
-        write_binary_file("main/akari.h", AKARI_LIB_DATA, AKARI_LIB_LEN);
     } else {
         write_file("index.html", INDEX_HTML_TEMPLATE);
         write_file("main.c", MAIN_C_TEMPLATE);
