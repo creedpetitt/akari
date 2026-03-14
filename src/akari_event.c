@@ -14,8 +14,8 @@
 static uint64_t get_time_ms(void) {
 #if defined(__linux__) || defined(__APPLE__)
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)(ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return ((uint64_t)ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
 #elif defined(ESP_PLATFORM)
     // ESP32 timer returns microseconds since boot
     return (uint64_t)(esp_timer_get_time() / 1000ULL);

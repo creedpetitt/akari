@@ -152,7 +152,7 @@ static int match_route(akari_context* ctx, const char* route_path) {
     return (req_p == req_end && *rt_p == '\0');
 }
 
-static void akari_handle_http(akari_connection* conn) {
+void akari_handle_http(akari_connection* conn) {
     const char *method, *path;
     size_t method_len, path_len;
     int minor_version;

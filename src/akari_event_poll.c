@@ -2,16 +2,14 @@
 #include <poll.h>
 #include <unistd.h>
 
-#define AKARI_MAX_POLL_FDS 128
-
 void akari_run_poll(int srv_fd, akari_callback on_data) {
-    struct pollfd fds[AKARI_MAX_POLL_FDS];
+    struct pollfd fds[AKARI_MAX_CONNECTIONS + 1];
     int nfds = 1;
 
     fds[0].fd = srv_fd;
     fds[0].events = POLLIN;
 
-    for (int i = 1; i < AKARI_MAX_POLL_FDS; i++) {
+    for (int i = 1; i < AKARI_MAX_CONNECTIONS + 1; i++) {
         fds[i].fd = -1;
     }
 
@@ -33,7 +31,7 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 int client_fd = akari_tcp_accept(srv_fd, NULL);
                 if (client_fd != -1) {
                     int added = 0;
-                    for (int j = 1; j < AKARI_MAX_POLL_FDS; j++) {
+                    for (int j = 1; j < AKARI_MAX_CONNECTIONS + 1; j++) {
                         if (fds[j].fd == -1) {
                             fds[j].fd = client_fd;
                             fds[j].events = POLLIN;

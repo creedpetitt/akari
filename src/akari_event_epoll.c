@@ -2,8 +2,6 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 
-#define AKARI_MAX_EVENTS 64
-
 void akari_run_epoll(int srv_fd, akari_callback on_data) {
     int epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
@@ -11,7 +9,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
         return;
     }
 
-    struct epoll_event ev, events[AKARI_MAX_EVENTS];
+    struct epoll_event ev, events[AKARI_MAX_CONNECTIONS];
 
     ev.events = EPOLLIN;
     ev.data.fd = srv_fd;
@@ -24,7 +22,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
     AKARI_LOG("epoll engine started");
 
     while (akari_running) {
-        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_EVENTS, 100);
+        int nfds = epoll_wait(epoll_fd, events, AKARI_MAX_CONNECTIONS, 100);
         if (nfds == -1) {
             if (akari_running) {
                 AKARI_LOG("epoll_wait failed");

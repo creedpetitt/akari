@@ -43,7 +43,7 @@ int akari_tcp_listen(int fd) {
 int akari_tcp_accept(int fd, const struct sockaddr_in* addr) {
     for (;;) {
         socklen_t addr_len = sizeof(struct sockaddr_in);
-        int client_fd = accept(fd, (struct sockaddr*)addr, &addr_len);
+        int client_fd = accept(fd, (struct sockaddr*)addr, addr ? &addr_len : NULL);
         
         if (client_fd == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;
