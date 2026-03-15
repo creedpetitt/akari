@@ -12,7 +12,7 @@
 
 Akari is an industry-grade, non-blocking HTTP micro-framework written in **Pure C11**. Designed specifically for resource-constrained environments (ESP32, STM32) and high-performance Linux edge computing, Akari provides a modern, ergonomic developer experience without a single call to `malloc()` during the request lifecycle.
 
-By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, Akari guarantees zero heap fragmentation and provides a predictable, fixed memory ceiling—making it the ideal choice for IoT devices.
+By strictly adhering to a **Zero-Allocation** and **Zero-Copy** philosophy, utilizing an advanced **non-blocking egress queue**, and supporting real-time **asynchronous file streaming**, Akari guarantees zero heap fragmentation and extremely deterministic performance without stalling the event loop.
 
 ---
 
@@ -108,44 +108,13 @@ int main() {
 
 Explore the sub-guides for a deeper dive into the Akari ecosystem:
 
-*   **[Architecture & Philosophy](docs/architecture.md)**: Deep dive into the Zero-Allocation engine and Event Loop.
+*   **[API Reference](docs/api.md)**: Explore the user-facing routing, JSON, and response-building functions.
+*   **[Architecture & Philosophy](docs/architecture.md)**: Deep dive into the Zero-Allocation engine, Egress Queue, and Event Loop.
 *   **[Embedded Deployment](docs/embedded.md)**: Tuning memory constants for ESP32 and ARM Cortex-M.
 
 ---
 
-## API Reference
 
-### Routing & Request Handling
-
-Akari features a static routing engine that supports dynamic path parameters with zero allocations.
-
-*   **Registration:** `AKARI_GET("/api/v1/:resource", handler)`
-*   **Path Params:** `akari_param_to_int(ctx, "id")` or `akari_get_path_param(ctx, "key", &len)`.
-*   **Query Strings:** Lazily parsed using `akari_query_str(ctx, "key", "default")`.
-
-### JSON Integration
-
-Akari bundles an abstraction over the **jsmn** parser for high-performance JSON extraction.
-
-```c
-void handle_post(akari_context* ctx) {
-    int age = akari_json_get_int(ctx, "age");
-    const char* name = akari_json_get_string(ctx, "name", &len);
-    
-    akari_res_json(ctx, 200, "{\"status\": \"success\"}");
-}
-```
-
-### Response Buffering
-
-Use the ergonomic `akari_printf` to build responses without managing your own buffers.
-
-```c
-akari_printf(ctx, "Status: %s\n", "Operational");
-akari_send(ctx, 200, "text/plain");
-```
-
----
 
 ## Deterministic Memory
 
@@ -155,7 +124,11 @@ Configure Akari for your hardware constraints at compile-time using the followin
 | :--- | :--- | :--- |
 | `AKARI_MAX_CONNECTIONS` | 8 | Concurrent connections in the pool. |
 | `AKARI_MAX_ROUTES` | 16 | Total registered API endpoints. |
-| `AKARI_RES_BUF_SIZE` | 512 | Stack buffer for response formatting. |
+| `AKARI_REQ_BUF_SIZE` | 4096 | Size of the incoming request buffer per connection. |
+| `AKARI_RES_BUF_SIZE` | 512 | Size of the persistent outgoing response buffer per connection. |
+| `AKARI_HEADER_TIMEOUT_MS` | 5000 | Max time allowed to read HTTP headers. |
+| `AKARI_BODY_TIMEOUT_MS`  | 10000 | Max time allowed to read the HTTP body. |
+| `AKARI_KEEPALIVE_TIMEOUT_MS` | 10000 | Max time to keep an idle connection alive. |
 
 ---
 

@@ -16,7 +16,7 @@ Akari can be configured for your specific hardware. Use the table below to confi
 ### Tuning Macros
 
 #### `AKARI_MAX_CONNECTIONS`
-Controls the number of simultaneous TCP connections in the pre-allocated pool. Each connection costs approximately 4KB of static RAM (depending on `AKARI_BUF_SIZE`).
+Controls the number of simultaneous TCP connections in the pre-allocated pool. Each connection costs approximately ~5KB of static RAM (depending heavily on `AKARI_REQ_BUF_SIZE` and `AKARI_RES_BUF_SIZE`).
 
 #### `AKARI_MAX_ROUTES`
 **Default: 16**
@@ -24,7 +24,7 @@ The maximum number of `AKARI_GET` or `AKARI_POST` handlers. Increasing this is e
 
 #### `AKARI_RES_BUF_SIZE`
 **Default: 512**
-The size of the stack buffer used by `akari_printf`. This lives on the stack *only* during the request.
+The size of the persistent transmission buffer residing in each connection object. It dictates the maximum size of dynamic JSON/HTML responses built via `akari_printf`. Static files streamed via `akari_res_file` bypass this limit completely by reading directly from disk in 1KB chunks.
 
 ---
 
