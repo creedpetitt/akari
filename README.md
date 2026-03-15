@@ -118,17 +118,39 @@ Explore the sub-guides for a deeper dive into the Akari ecosystem:
 
 ## Deterministic Memory
 
-Configure Akari for your hardware constraints at compile-time using the following macros:
+Configure Akari for your exact hardware constraints at compile-time using the following macros.
 
-| Constant | Default | Description |
+### Memory Boundaries
+| Macro | Default | Description |
 | :--- | :--- | :--- |
-| `AKARI_MAX_CONNECTIONS` | 8 | Concurrent connections in the pool. |
+| `AKARI_MAX_CONNECTIONS` | 8 | Concurrent active TCP connections in the pool. |
 | `AKARI_MAX_ROUTES` | 16 | Total registered API endpoints. |
-| `AKARI_REQ_BUF_SIZE` | 4096 | Size of the incoming request buffer per connection. |
-| `AKARI_RES_BUF_SIZE` | 512 | Size of the persistent outgoing response buffer per connection. |
-| `AKARI_HEADER_TIMEOUT_MS` | 5000 | Max time allowed to read HTTP headers. |
-| `AKARI_BODY_TIMEOUT_MS`  | 10000 | Max time allowed to read the HTTP body. |
-| `AKARI_KEEPALIVE_TIMEOUT_MS` | 10000 | Max time to keep an idle connection alive. |
+| `AKARI_REQ_BUF_SIZE` | 4096 | Bytes allocated per connection for incoming HTTP read buffers. |
+| `AKARI_RES_BUF_SIZE` | 512 | Bytes allocated per connection for outgoing persistence buffering. |
+
+### HTTP Parsing Limits
+| Macro | Default | Description |
+| :--- | :--- | :--- |
+| `AKARI_MAX_PATH_PARAMS` | 4 | Maximum dynamic path parameters (`/:id`). |
+| `AKARI_MAX_HEADERS` | 32 | Maximum HTTP headers matched per request. |
+| `AKARI_MAX_HEADER_BYTES`| 8192 | Max byte length for incoming headers. |
+| `AKARI_MAX_BODY_BYTES` | 1048576 | Max byte length for an HTTP payload (1MB). |
+| `AKARI_MAX_PATH_LEN` | 2048 | Max byte length for the URI path. |
+| `AKARI_MAX_METHOD_LEN` | 8 | Max byte length for the HTTP Method constraint. |
+
+### Engine & Connection Timeouts
+| Macro | Default | Description |
+| :--- | :--- | :--- |
+| `AKARI_HEADER_TIMEOUT_MS` | 5000 | Max ms allowed to parse complete HTTP headers. |
+| `AKARI_BODY_TIMEOUT_MS`  | 10000 | Max ms allowed to finish reading an HTTP body. |
+| `AKARI_KEEPALIVE_TIMEOUT_MS` | 10000 | Max ms to keep an idle `keep-alive` connection alive. |
+
+### Built-in Token Bucket Rate Limiting
+| Macro | Default | Description |
+| :--- | :--- | :--- |
+| `AKARI_RATE_BUCKETS` | 64 | Hash buckets available to track incoming client IPs. |
+| `AKARI_RATE_REFILL_PER_SEC` | 50 | Tokens (requests) replenished per second per client IP. |
+| `AKARI_RATE_BURST` | 100 | Maximum burst capacity per client IP. |
 
 ---
 

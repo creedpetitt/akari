@@ -31,11 +31,17 @@ The size of the persistent transmission buffer residing in each connection objec
 ## Hardware Support Guides
 
 ### ESP32 (ESP-IDF)
-To run Akari on an ESP32:
-1.  Copy `akari.h` to your `main/` directory.
-2.  Enable POSIX sockets in `sdkconfig` (usually enabled by default).
-3.  Include `akari.h` and use the standard `akari_http_start` function.
-4.  Akari will automatically detect the ESP32 and use the `poll()` engine.
+To run Akari on an ESP32, you should link it as an official component:
+1.  Create an `idf_component.yml` file in your `main/` directory:
+    ```yaml
+    dependencies:
+      akari:
+        git: https://github.com/creedpetitt/akari.git
+    ```
+2.  Include `"akari_http.h"` in your `main.c` and use the standard `akari_http_start` function.
+3.  Akari will automatically detect the ESP32, include the correct `lwip` definitions, and use the `poll()` engine.
+
+**Recommendation:** For an instant boilerplate project with complete Wi-Fi setup logic, we strongly recommend referencing the [examples/basic_esp32](../examples/basic_esp32) directory or using the `akari init <name> --esp32` CLI tool!
 
 ### ARM Cortex-M (Bare-Metal)
 On older ARM Cortex chips like the STM32:
