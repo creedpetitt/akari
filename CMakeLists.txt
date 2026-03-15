@@ -18,7 +18,8 @@ set(AKARI_INCLUDES
 if(IDF_PATH)
     list(APPEND AKARI_SRCS "src/akari_event_poll.c")
     idf_component_register(SRCS ${AKARI_SRCS}
-                        INCLUDE_DIRS ${AKARI_INCLUDES})
+                        INCLUDE_DIRS ${AKARI_INCLUDES}
+                        PRIV_REQUIRES esp_timer)
     add_definitions(-DAKARI_USE_POLL)
 else()
     # Standard CMake Support

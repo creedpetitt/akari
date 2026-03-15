@@ -14,6 +14,10 @@
 #include <errno.h>
 #include "akari_http.h"
 
+#ifdef ESP_PLATFORM
+#include "esp_timer.h"
+#endif
+
 typedef struct {
     const char* method;
     const char* path;

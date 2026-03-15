@@ -1,5 +1,10 @@
 #include "akari_internal.h"
+#if defined(ESP_PLATFORM) || defined(AKARI_USE_LWIP)
+#include "lwip/sockets.h"
+#include <sys/poll.h>
+#else
 #include <poll.h>
+#endif
 #include <unistd.h>
 
 void akari_run_poll(int srv_fd, akari_callback on_data) {

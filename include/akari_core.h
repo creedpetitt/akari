@@ -28,6 +28,10 @@
 #endif
 
 // --- PORTABILITY GUARDS ---
+#ifndef SOMAXCONN
+#define SOMAXCONN 128
+#endif
+
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
