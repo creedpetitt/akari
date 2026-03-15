@@ -35,6 +35,10 @@
 #endif
 
 // --- PORTABILITY GUARDS ---
+#ifndef SOMAXCONN
+#define SOMAXCONN 128
+#endif
+
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
@@ -1253,6 +1257,10 @@ void akari_run_server(uint16_t port, akari_callback on_data) {
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+
+#ifdef ESP_PLATFORM
+#include "esp_timer.h"
+#endif
 
 typedef struct {
     const char* method;
@@ -2650,7 +2658,12 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
 #endif // AKARI_USE_POLL
 
 #ifdef AKARI_USE_POLL
+#if defined(ESP_PLATFORM) || defined(AKARI_USE_LWIP)
+#include "lwip/sockets.h"
+#include <sys/poll.h>
+#else
 #include <poll.h>
+#endif
 #include <unistd.h>
 
 void akari_run_poll(int srv_fd, akari_callback on_data) {
