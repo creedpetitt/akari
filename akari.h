@@ -116,6 +116,7 @@ typedef struct {
     size_t tx_file_len;
     size_t tx_file_sent;
     int tx_keep_alive;
+    uint8_t epoll_flags;
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
@@ -1059,6 +1060,7 @@ akari_connection* akari_get_conn(int fd) {
         c->tx_file_len = 0;
         c->tx_file_sent = 0;
         c->tx_keep_alive = 0;
+        c->epoll_flags = 0;
         return c;
     }
 
@@ -1075,6 +1077,7 @@ void akari_release_conn(int fd) {
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
+            conn_pool[i].epoll_flags = 0;
             return;
         }
     }
@@ -2612,6 +2615,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                     akari_connection* conn = akari_get_conn(client_fd);
                     if (conn) {
                         conn->client_ip = client_addr.sin_addr;
+                        conn->epoll_flags = EPOLLIN;
                     }
                     ev.events = EPOLLIN;
                     ev.data.fd = client_fd;
@@ -2640,12 +2644,16 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 
                 // Update epoll mask
                 if (conn && conn->fd != -1) {
-                    ev.events = EPOLLIN;
+                    uint8_t new_flags = EPOLLIN;
                     if (conn->state == AKARI_CONN_SENDING) {
-                        ev.events |= EPOLLOUT;
+                        new_flags |= EPOLLOUT;
                     }
-                    ev.data.fd = client_fd;
-                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_fd, &ev);
+                    if (conn->epoll_flags != new_flags) {
+                        ev.events = new_flags;
+                        ev.data.fd = client_fd;
+                        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_fd, &ev);
+                        conn->epoll_flags = new_flags;
+                    }
                 }
             }
         }
