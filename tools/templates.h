@@ -76,7 +76,7 @@ const char* ESP_MAIN_C_TEMPLATE =
 "\n"
 "void handle_home(akari_context* ctx) {\n"
 "    size_t len = index_html_end - index_html_start;\n"
-"    akari_res_data(ctx, 200, \"text/html\", index_html_start, len);\n"
+"    akari_res_flash(ctx, 200, \"text/html\", index_html_start, len);\n"
 "}\n"
 "\n"
 "void app_main(void) {\n"
