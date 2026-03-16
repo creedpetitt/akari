@@ -152,6 +152,16 @@ void akari_res_data(akari_context* ctx, int status_code,
     send_response_raw(ctx->_conn->fd, status_code, content_type, data, len, ctx->keep_alive);
 }
 
+void akari_res_flash(akari_context* ctx, int status_code,
+                     const char* content_type, const uint8_t* ptr, size_t len) {
+    akari_connection* conn = ctx->_conn;
+    conn->tx_flash_buf = ptr;
+    conn->tx_flash_len = len;
+    conn->tx_flash_sent = 0;
+    
+    send_headers(ctx, status_code, content_type, len);
+}
+
 static const char* get_mime_type(const char* filepath) {
     const char* ext = strrchr(filepath, '.');
     if (!ext) return "application/octet-stream";
@@ -181,13 +191,12 @@ void akari_res_file(akari_context* ctx, const char* filepath) {
         return;
     }
 
-    send_headers(ctx, 200, get_mime_type(filepath), st.st_size);
     akari_connection* conn = ctx->_conn;
     conn->tx_file_fd = fd;
     conn->tx_file_len = st.st_size;
     conn->tx_file_sent = 0;
     
-    akari_handle_write(conn);
+    send_headers(ctx, 200, get_mime_type(filepath), st.st_size);
 }
 
 void akari_http_add_route(const char* method, const char* path,
@@ -429,6 +438,8 @@ void akari_handle_http(akari_connection* conn) {
     ctx.keep_alive = keep_alive;
     ctx._conn = conn;
 
+    conn->parsed_header_len = pret;
+    conn->expected_body_len = expected_body;
     conn->state = AKARI_CONN_DISPATCH;
 
     for (int i = 0; i < route_count; i++) {
@@ -445,15 +456,20 @@ void akari_handle_http(akari_connection* conn) {
     akari_res_send(&ctx, 404, "text/plain", "404 Route Not Found");
 
 done:
-    if (ctx.keep_alive) {
-        size_t consumed = pret + expected_body;
-        size_t leftover = conn->buf_len - consumed;
-        if (leftover > 0)
-            memmove(conn->buf, conn->buf + consumed, leftover);
-        conn->buf_len = leftover;
-        conn->parsed_header_len = 0;
-        conn->expected_body_len = 0;
-        conn->state = AKARI_CONN_IDLE;
+    if (conn->state == AKARI_CONN_DISPATCH) {
+        if (ctx.keep_alive) {
+            size_t consumed = pret + expected_body;
+            size_t leftover = conn->buf_len - consumed;
+            if (leftover > 0)
+                memmove(conn->buf, conn->buf + consumed, leftover);
+            conn->buf_len = leftover;
+            conn->parsed_header_len = 0;
+            conn->expected_body_len = 0;
+            conn->state = AKARI_CONN_IDLE;
+        } else {
+            akari_release_conn(conn->fd);
+            close(conn->fd);
+        }
     }
 }
 

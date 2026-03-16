@@ -51,6 +51,9 @@ typedef struct {
     int tx_file_fd;
     size_t tx_file_len;
     size_t tx_file_sent;
+    const uint8_t* tx_flash_buf;
+    size_t tx_flash_len;
+    size_t tx_flash_sent;
     int tx_keep_alive;
     uint8_t epoll_flags;
 } akari_connection;

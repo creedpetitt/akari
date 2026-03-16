@@ -99,6 +99,9 @@ akari_connection* akari_get_conn(int fd) {
         c->tx_file_fd = -1;
         c->tx_file_len = 0;
         c->tx_file_sent = 0;
+        c->tx_flash_buf = NULL;
+        c->tx_flash_len = 0;
+        c->tx_flash_sent = 0;
         c->tx_keep_alive = 0;
         c->epoll_flags = 0;
         return c;
@@ -114,6 +117,7 @@ void akari_release_conn(int fd) {
                 close(conn_pool[i].tx_file_fd);
                 conn_pool[i].tx_file_fd = -1;
             }
+            conn_pool[i].tx_flash_buf = NULL;
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
@@ -152,7 +156,9 @@ void akari_sweep_timeouts(void) {
         if (timed_out) {
             AKARI_LOG("timeout on fd %d (state=%d, elapsed=%llu ms)",
                       c->fd, c->state, (unsigned long long)elapsed);
-            akari_send_error(c->fd, 408, 0);
+            if (c->state != AKARI_CONN_IDLE) {
+                akari_send_error(c->fd, 408, 0);
+            }
             int fd = c->fd;
             akari_release_conn(fd);
             close(fd);
@@ -242,6 +248,23 @@ static int send_tx_file(akari_connection* conn) {
     return conn->tx_file_sent >= conn->tx_file_len;
 }
 
+static int send_tx_flash(akari_connection* conn) {
+    if (!conn->tx_flash_buf || conn->tx_flash_sent >= conn->tx_flash_len) return 1;
+    
+    size_t to_send = conn->tx_flash_len - conn->tx_flash_sent;
+    if (to_send > 1024) to_send = 1024; // Stream 1KB at a time
+
+    ssize_t sent = send(conn->fd, conn->tx_flash_buf + conn->tx_flash_sent, to_send, MSG_NOSIGNAL);
+    if (sent > 0) {
+        conn->tx_flash_sent += sent;
+        conn->last_activity_ms = get_time_ms();
+    } else if (sent == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+        return -1;
+    }
+    return conn->tx_flash_sent >= conn->tx_flash_len;
+}
+
 void akari_handle_write(akari_connection* conn) {
     if (conn->state != AKARI_CONN_SENDING) return;
 
@@ -252,6 +275,10 @@ void akari_handle_write(akari_connection* conn) {
     int file_status = send_tx_file(conn);
     if (file_status == 0) return;
     if (file_status == -1) goto error;
+
+    int flash_status = send_tx_flash(conn);
+    if (flash_status == 0) return;
+    if (flash_status == -1) goto error;
 
     close_tx_file(conn);
 
@@ -265,6 +292,8 @@ void akari_handle_write(akari_connection* conn) {
         conn->expected_body_len = 0;
         conn->tx_len = 0;
         conn->tx_sent = 0;
+        conn->tx_flash_buf = NULL;
+        conn->tx_file_fd = -1;
         conn->state = AKARI_CONN_IDLE;
     } else {
         akari_release_conn(conn->fd);

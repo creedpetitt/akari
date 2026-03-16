@@ -6,6 +6,7 @@
 #include <poll.h>
 #endif
 #include <unistd.h>
+#include <fcntl.h>
 
 void akari_run_poll(int srv_fd, akari_callback on_data) {
     struct pollfd fds[AKARI_MAX_CONNECTIONS + 1];
@@ -21,10 +22,22 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
     AKARI_LOG("poll engine started");
 
     while (akari_running) {
+        // Clean up any FDs that might have been closed by sweep_timeouts or handle_write
+        for (int i = 1; i < nfds; i++) {
+            if (fds[i].fd != -1) {
+                int flags = fcntl(fds[i].fd, F_GETFL, 0);
+                if (flags == -1) {
+                    fds[i].fd = -1;
+                }
+            }
+        }
+
         int ready = poll(fds, nfds, 100);
         if (ready == -1) {
             if (akari_running) AKARI_LOG("poll failed");
-            break;
+            // If it still fails, sleep briefly to avoid spin lock and continue
+            usleep(10000); 
+            continue;
         }
 
         for (int i = 0; i < nfds; i++) {
@@ -76,6 +89,8 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                     if (conn->state == AKARI_CONN_SENDING) {
                         fds[i].events |= POLLOUT;
                     }
+                } else if (conn && conn->fd == -1) {
+                    fds[i].fd = -1;
                 }
             }
         }
