@@ -100,6 +100,7 @@ akari_connection* akari_get_conn(int fd) {
         c->tx_file_len = 0;
         c->tx_file_sent = 0;
         c->tx_keep_alive = 0;
+        c->epoll_flags = 0;
         return c;
     }
 
@@ -116,6 +117,7 @@ void akari_release_conn(int fd) {
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
+            conn_pool[i].epoll_flags = 0;
             return;
         }
     }

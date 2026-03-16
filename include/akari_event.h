@@ -52,6 +52,7 @@ typedef struct {
     size_t tx_file_len;
     size_t tx_file_sent;
     int tx_keep_alive;
+    uint8_t epoll_flags;
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
