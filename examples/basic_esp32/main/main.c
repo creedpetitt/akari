@@ -9,7 +9,7 @@ extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
 
 void handle_home(akari_context* ctx) {
     size_t len = index_html_end - index_html_start;
-    akari_res_data(ctx, 200, "text/html", index_html_start, len);
+    akari_res_flash(ctx, 200, "text/html", index_html_start, len);
 }
 
 void app_main(void) {
