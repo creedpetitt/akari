@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<title>Akari LED Dashboard</title>
+<style>
+body {
+font-family: sans-serif;
+text-align: center;
+background: #1e1e1e;
+color: #ffffff;
+margin: 0;
+padding: 20px;
+}
+.card {
+background: #2d2d2d;
+border-radius: 8px;
+padding: 20px;
+margin: 20px auto;
+max-width: 350px;
+box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+h2 { color: #ff5722; }
+h3 { margin-top: 0; }
+button {
+padding: 10px 15px;
+margin: 5px;
+border: none;
+border-radius: 4px;
+font-weight: bold;
+cursor: pointer;
+}
+.on { background: #4CAF50; color: white; }
+.off { background: #f44336; color: white; }
+.blink { background: #2196F3; color: white; }
+input[type=range] {
+width: 100%;
+margin-top: 15px;
+}
+label {
+display: block;
+margin-top: 15px;
+font-size: 14px;
+color: #aaa;
+}
+</style>
+</head>
+<body>
+
+<h2>Akari Web Server</h2>
+
+<div class="card">
+<h3>Green LED</h3>
+<button class="on" onclick="setLed('green', 'on')">ON</button>
+<button class="off" onclick="setLed('green', 'off')">OFF</button>
+<button class="blink" onclick="setLed('green', 'blink')">BLINK</button>
+
+<label>Blink Rate (ms): <span id="g-val">1000</span></label>
+<input type="range" min="50" max="3000" value="1000" 
+       oninput="document.getElementById('g-val').innerText=this.value" 
+       onchange="setRate('green', this.value)">
+</div>
+
+<div class="card">
+<h3>Red LED</h3>
+<button class="on" onclick="setLed('red', 'on')">ON</button>
+<button class="off" onclick="setLed('red', 'off')">OFF</button>
+<button class="blink" onclick="setLed('red', 'blink')">BLINK</button>
+
+<label>Blink Rate (ms): <span id="r-val">1000</span></label>
+<input type="range" min="50" max="3000" value="1000" 
+       oninput="document.getElementById('r-val').innerText=this.value" 
+       onchange="setRate('red', this.value)">
+</div>
+
+<script>
+function setLed(color, state) {
+fetch('/api/led/' + color + '/' + state)
+.then(response => response.json())
+.then(data => console.log('Success:', data))
+.catch(error => console.error('Error:', error));
+}
+
+function setRate(color, ms) {
+fetch('/api/led/' + color + '/rate?ms=' + ms)
+.then(response => response.json())
+.then(data => console.log('Rate updated:', data))
+.catch(error => console.error('Error:', error));
+}
+</script>
+
+</body>
+</html>

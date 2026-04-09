@@ -4,6 +4,7 @@ This directory contains reference implementations to help you get started with t
 
 - **[basic_linux](basic_linux/)**: The standard implementation for Linux/macOS, demonstrating how to compile Akari from its raw source files using a standard Makefile. It achieved 230,000 req/sec in benchmarking.
 - **[basic_esp32](basic_esp32/)**: A complete ESP-IDF component implementation demonstrating how to run Akari on an ESP32 chip alongside the standard Wi-Fi boilerplate.
+- **[hardware_esp32](hardware_esp32/)**: An advanced ESP32 example demonstrating how to integrate Akari with hardware GPIO (LED control) and background FreeRTOS tasks concurrently.
 
 ## Recommendation for New Projects
 While these examples are great for absolute control, we strongly recommend using the official CLI tool to bootstrap new projects:
