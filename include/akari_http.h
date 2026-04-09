@@ -74,6 +74,12 @@ typedef struct {
 
 typedef void (*akari_route_handler)(akari_context* ctx);
 
+#define AKARI_EMBED_FILE(name) \
+    extern const uint8_t name##_start[] asm("_binary_" #name "_start"); \
+    extern const uint8_t name##_end[]   asm("_binary_" #name "_end")
+
+#define AKARI_FILE_SIZE(name) (size_t)(name##_end - name##_start)
+
 #define AKARI_GET(path, handler)  akari_http_add_route("GET", path, handler)
 #define AKARI_POST(path, handler) akari_http_add_route("POST", path, handler)
 
