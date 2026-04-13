@@ -95,27 +95,38 @@ static void send_response_raw(int fd, int status, const char* content_type,
                               const void* body, size_t body_len, int keep_alive) {
     akari_connection* conn = akari_get_conn(fd);
     if (!conn) return;
-    
-    int n = snprintf(conn->res_buf, sizeof(conn->res_buf),
-        "HTTP/1.1 %d %s\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: %s\r\n"
-        "\r\n",
-        status, status_text(status),
-        content_type, body_len,
-        keep_alive ? "keep-alive" : "close");
-        
-    if (n <= 0) return;
-    if ((size_t)n >= sizeof(conn->res_buf)) n = (int)sizeof(conn->res_buf) - 1;
+
+    size_t actual_body_len = (body && body_len > 0) ? body_len : 0;
+    int n = 0;
+    while (1) {
+        n = snprintf(conn->res_buf, sizeof(conn->res_buf),
+            "HTTP/1.1 %d %s\r\n"
+            "Content-Type: %s\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: %s\r\n"
+            "\r\n",
+            status, status_text(status),
+            content_type, actual_body_len,
+            keep_alive ? "keep-alive" : "close");
+
+        if (n <= 0) return;
+        if ((size_t)n >= sizeof(conn->res_buf)) return;
+
+        size_t header_len = (size_t)n;
+        size_t max_body_by_space = sizeof(conn->res_buf) - header_len;
+        if (actual_body_len <= max_body_by_space) {
+            break;
+        }
+        actual_body_len = max_body_by_space;
+    }
     
     conn->tx_len = (size_t)n;
     
-    if (body && body_len > 0) {
+    if (actual_body_len > 0) {
         size_t space = sizeof(conn->res_buf) - conn->tx_len;
-        if (body_len <= space) {
-            memcpy(conn->res_buf + conn->tx_len, body, body_len);
-            conn->tx_len += body_len;
+        if (actual_body_len <= space) {
+            memcpy(conn->res_buf + conn->tx_len, body, actual_body_len);
+            conn->tx_len += actual_body_len;
         } else {
             memcpy(conn->res_buf + conn->tx_len, body, space);
             conn->tx_len += space;
@@ -477,11 +488,14 @@ void akari_printf(akari_context* ctx, const char* fmt, ...) {
     akari_connection* conn = ctx->_conn;
     va_list args;
     va_start(args, fmt);
-    size_t avail = sizeof(conn->res_buf) - ctx->res_len - 150;
-    if (avail <= 0) {
+
+    if (ctx->res_len >= sizeof(conn->res_buf) - 1) {
         va_end(args);
         return;
     }
+
+    size_t avail = sizeof(conn->res_buf) - ctx->res_len;
+
     int n = vsnprintf(conn->res_buf + ctx->res_len, avail, fmt, args);
     va_end(args);
     if (n > 0) {
