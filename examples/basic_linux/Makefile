@@ -1,17 +1,41 @@
-CC = gcc
-CFLAGS = -O2 -Wall -Wextra -DAKARI_MAX_CONNECTIONS=1024 -DAKARI_RATE_BURST=10000000 -DAKARI_RATE_REFILL_PER_SEC=10000000 -I../../include -I../../vendor/picohttpparser -I../../vendor/jsmn
+CC ?= gcc
+ROOT := ../..
 
-SRCS = main.c \
-       ../../src/akari_core.c \
-       ../../src/akari_http.c \
-       ../../src/akari_event.c \
-       ../../src/akari_event_epoll.c \
-       ../../vendor/picohttpparser/picohttpparser.c
+INCLUDES := -I$(ROOT)/include -I$(ROOT)/vendor/picohttpparser -I$(ROOT)/vendor/jsmn
 
-TARGET = akari_linux_demo
+COMMON_DEFS := \
+	-DAKARI_MAX_CONNECTIONS=1024 \
+	-DAKARI_RATE_BUCKETS=4096 \
+	-DAKARI_RATE_BURST=10000000 \
+	-DAKARI_RATE_REFILL_PER_SEC=10000000
 
-all:
-	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET)
+DEV_CFLAGS ?= -O2 -Wall -Wextra $(COMMON_DEFS)
+BENCH_CFLAGS ?= -O3 -DNDEBUG -march=native -flto -Wall -Wextra $(COMMON_DEFS)
+
+SRCS := main.c \
+	$(ROOT)/src/akari_core.c \
+	$(ROOT)/src/akari_http.c \
+	$(ROOT)/src/akari_event.c \
+	$(ROOT)/src/akari_event_epoll.c \
+	$(ROOT)/vendor/picohttpparser/picohttpparser.c
+
+TARGET := akari_linux_demo
+
+all: build
+
+build:
+	$(CC) $(DEV_CFLAGS) $(INCLUDES) $(SRCS) -o $(TARGET)
+
+bench:
+	$(CC) $(BENCH_CFLAGS) $(INCLUDES) $(SRCS) -o $(TARGET)
+
+run: build
+	./$(TARGET)
+
+bench-run: bench
+	./$(TARGET)
 
 clean:
 	rm -f $(TARGET)
+
+.PHONY: all build bench run bench-run clean
