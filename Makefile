@@ -7,7 +7,7 @@ INCLUDES = -Iinclude -Ivendor/picohttpparser -Ivendor/jsmn
 PLATFORM ?= linux
 
 # Core source files
-SRCS = examples/basic_server/main.c \
+SRCS = examples/basic_linux/main.c \
        src/akari_core.c \
        src/akari_event.c \
        src/akari_http.c \
