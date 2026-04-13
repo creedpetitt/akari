@@ -33,10 +33,14 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 int client_fd = akari_tcp_accept(srv_fd, &client_addr);
                 if (client_fd != -1) {
                     akari_connection* conn = akari_get_conn(client_fd);
-                    if (conn) {
-                        conn->client_ip = client_addr.sin_addr;
-                        conn->epoll_flags = EPOLLIN;
+                    if (!conn) {
+                        close(client_fd);
+                        continue;
                     }
+
+                    conn->client_ip = client_addr.sin_addr;
+                    conn->epoll_flags = EPOLLIN;
+
                     ev.events = EPOLLIN;
                     ev.data.fd = client_fd;
                     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {

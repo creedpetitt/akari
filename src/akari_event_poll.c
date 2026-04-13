@@ -48,9 +48,13 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 int client_fd = akari_tcp_accept(srv_fd, &client_addr);
                 if (client_fd != -1) {
                     akari_connection* conn = akari_get_conn(client_fd);
-                    if (conn) {
-                        conn->client_ip = client_addr.sin_addr;
+                    if (!conn) {
+                        close(client_fd);
+                        continue;
                     }
+
+                    conn->client_ip = client_addr.sin_addr;
+
                     int added = 0;
                     for (int j = 1; j < AKARI_MAX_CONNECTIONS + 1; j++) {
                         if (fds[j].fd == -1) {
