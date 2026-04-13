@@ -115,8 +115,11 @@ typedef struct {
     int tx_file_fd;
     size_t tx_file_len;
     size_t tx_file_sent;
+    const uint8_t* tx_flash_buf;
+    size_t tx_flash_len;
+    size_t tx_flash_sent;
     int tx_keep_alive;
-    uint8_t epoll_flags;
+    uint32_t epoll_flags;
 } akari_connection;
 
 typedef void (*akari_callback)(akari_connection* conn);
@@ -223,6 +226,12 @@ typedef struct {
 
 typedef void (*akari_route_handler)(akari_context* ctx);
 
+#define AKARI_EMBED_FILE(name) \
+    extern const uint8_t name##_start[] asm("_binary_" #name "_start"); \
+    extern const uint8_t name##_end[]   asm("_binary_" #name "_end")
+
+#define AKARI_FILE_SIZE(name) (size_t)(name##_end - name##_start)
+
 #define AKARI_GET(path, handler)  akari_http_add_route("GET", path, handler)
 #define AKARI_POST(path, handler) akari_http_add_route("POST", path, handler)
 
@@ -247,6 +256,9 @@ void akari_res_send(akari_context* ctx, int status_code,
 
 void akari_res_data(akari_context* ctx, int status_code, 
                     const char* content_type, const void* data, size_t len);
+
+void akari_res_flash(akari_context* ctx, int status_code,
+                     const char* content_type, const uint8_t* ptr, size_t len);
 
 void akari_res_file(akari_context* ctx, const char* filepath);
 
@@ -1059,6 +1071,9 @@ akari_connection* akari_get_conn(int fd) {
         c->tx_file_fd = -1;
         c->tx_file_len = 0;
         c->tx_file_sent = 0;
+        c->tx_flash_buf = NULL;
+        c->tx_flash_len = 0;
+        c->tx_flash_sent = 0;
         c->tx_keep_alive = 0;
         c->epoll_flags = 0;
         return c;
@@ -1074,6 +1089,7 @@ void akari_release_conn(int fd) {
                 close(conn_pool[i].tx_file_fd);
                 conn_pool[i].tx_file_fd = -1;
             }
+            conn_pool[i].tx_flash_buf = NULL;
             conn_pool[i].fd = -1;
             conn_pool[i].buf_len = 0;
             conn_pool[i].state = AKARI_CONN_IDLE;
@@ -1112,7 +1128,9 @@ void akari_sweep_timeouts(void) {
         if (timed_out) {
             AKARI_LOG("timeout on fd %d (state=%d, elapsed=%llu ms)",
                       c->fd, c->state, (unsigned long long)elapsed);
-            akari_send_error(c->fd, 408, 0);
+            if (c->state != AKARI_CONN_IDLE) {
+                akari_send_error(c->fd, 408, 0);
+            }
             int fd = c->fd;
             akari_release_conn(fd);
             close(fd);
@@ -1202,6 +1220,23 @@ static int send_tx_file(akari_connection* conn) {
     return conn->tx_file_sent >= conn->tx_file_len;
 }
 
+static int send_tx_flash(akari_connection* conn) {
+    if (!conn->tx_flash_buf || conn->tx_flash_sent >= conn->tx_flash_len) return 1;
+    
+    size_t to_send = conn->tx_flash_len - conn->tx_flash_sent;
+    if (to_send > 1024) to_send = 1024; // Stream 1KB at a time
+
+    ssize_t sent = send(conn->fd, conn->tx_flash_buf + conn->tx_flash_sent, to_send, MSG_NOSIGNAL);
+    if (sent > 0) {
+        conn->tx_flash_sent += sent;
+        conn->last_activity_ms = get_time_ms();
+    } else if (sent == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+        return -1;
+    }
+    return conn->tx_flash_sent >= conn->tx_flash_len;
+}
+
 void akari_handle_write(akari_connection* conn) {
     if (conn->state != AKARI_CONN_SENDING) return;
 
@@ -1212,6 +1247,10 @@ void akari_handle_write(akari_connection* conn) {
     int file_status = send_tx_file(conn);
     if (file_status == 0) return;
     if (file_status == -1) goto error;
+
+    int flash_status = send_tx_flash(conn);
+    if (flash_status == 0) return;
+    if (flash_status == -1) goto error;
 
     close_tx_file(conn);
 
@@ -1225,6 +1264,8 @@ void akari_handle_write(akari_connection* conn) {
         conn->expected_body_len = 0;
         conn->tx_len = 0;
         conn->tx_sent = 0;
+        conn->tx_flash_buf = NULL;
+        conn->tx_file_fd = -1;
         conn->state = AKARI_CONN_IDLE;
     } else {
         akari_release_conn(conn->fd);
@@ -1342,27 +1383,38 @@ static void send_response_raw(int fd, int status, const char* content_type,
                               const void* body, size_t body_len, int keep_alive) {
     akari_connection* conn = akari_get_conn(fd);
     if (!conn) return;
-    
-    int n = snprintf(conn->res_buf, sizeof(conn->res_buf),
-        "HTTP/1.1 %d %s\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: %s\r\n"
-        "\r\n",
-        status, status_text(status),
-        content_type, body_len,
-        keep_alive ? "keep-alive" : "close");
-        
-    if (n <= 0) return;
-    if ((size_t)n >= sizeof(conn->res_buf)) n = (int)sizeof(conn->res_buf) - 1;
+
+    size_t actual_body_len = (body && body_len > 0) ? body_len : 0;
+    int n = 0;
+    while (1) {
+        n = snprintf(conn->res_buf, sizeof(conn->res_buf),
+            "HTTP/1.1 %d %s\r\n"
+            "Content-Type: %s\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: %s\r\n"
+            "\r\n",
+            status, status_text(status),
+            content_type, actual_body_len,
+            keep_alive ? "keep-alive" : "close");
+
+        if (n <= 0) return;
+        if ((size_t)n >= sizeof(conn->res_buf)) return;
+
+        size_t header_len = (size_t)n;
+        size_t max_body_by_space = sizeof(conn->res_buf) - header_len;
+        if (actual_body_len <= max_body_by_space) {
+            break;
+        }
+        actual_body_len = max_body_by_space;
+    }
     
     conn->tx_len = (size_t)n;
     
-    if (body && body_len > 0) {
+    if (actual_body_len > 0) {
         size_t space = sizeof(conn->res_buf) - conn->tx_len;
-        if (body_len <= space) {
-            memcpy(conn->res_buf + conn->tx_len, body, body_len);
-            conn->tx_len += body_len;
+        if (actual_body_len <= space) {
+            memcpy(conn->res_buf + conn->tx_len, body, actual_body_len);
+            conn->tx_len += actual_body_len;
         } else {
             memcpy(conn->res_buf + conn->tx_len, body, space);
             conn->tx_len += space;
@@ -1399,6 +1451,16 @@ void akari_res_data(akari_context* ctx, int status_code,
     send_response_raw(ctx->_conn->fd, status_code, content_type, data, len, ctx->keep_alive);
 }
 
+void akari_res_flash(akari_context* ctx, int status_code,
+                     const char* content_type, const uint8_t* ptr, size_t len) {
+    akari_connection* conn = ctx->_conn;
+    conn->tx_flash_buf = ptr;
+    conn->tx_flash_len = len;
+    conn->tx_flash_sent = 0;
+    
+    send_headers(ctx, status_code, content_type, len);
+}
+
 static const char* get_mime_type(const char* filepath) {
     const char* ext = strrchr(filepath, '.');
     if (!ext) return "application/octet-stream";
@@ -1428,13 +1490,12 @@ void akari_res_file(akari_context* ctx, const char* filepath) {
         return;
     }
 
-    send_headers(ctx, 200, get_mime_type(filepath), st.st_size);
     akari_connection* conn = ctx->_conn;
     conn->tx_file_fd = fd;
     conn->tx_file_len = st.st_size;
     conn->tx_file_sent = 0;
     
-    akari_handle_write(conn);
+    send_headers(ctx, 200, get_mime_type(filepath), st.st_size);
 }
 
 void akari_http_add_route(const char* method, const char* path,
@@ -1676,6 +1737,8 @@ void akari_handle_http(akari_connection* conn) {
     ctx.keep_alive = keep_alive;
     ctx._conn = conn;
 
+    conn->parsed_header_len = pret;
+    conn->expected_body_len = expected_body;
     conn->state = AKARI_CONN_DISPATCH;
 
     for (int i = 0; i < route_count; i++) {
@@ -1692,15 +1755,20 @@ void akari_handle_http(akari_connection* conn) {
     akari_res_send(&ctx, 404, "text/plain", "404 Route Not Found");
 
 done:
-    if (ctx.keep_alive) {
-        size_t consumed = pret + expected_body;
-        size_t leftover = conn->buf_len - consumed;
-        if (leftover > 0)
-            memmove(conn->buf, conn->buf + consumed, leftover);
-        conn->buf_len = leftover;
-        conn->parsed_header_len = 0;
-        conn->expected_body_len = 0;
-        conn->state = AKARI_CONN_IDLE;
+    if (conn->state == AKARI_CONN_DISPATCH) {
+        if (ctx.keep_alive) {
+            size_t consumed = pret + expected_body;
+            size_t leftover = conn->buf_len - consumed;
+            if (leftover > 0)
+                memmove(conn->buf, conn->buf + consumed, leftover);
+            conn->buf_len = leftover;
+            conn->parsed_header_len = 0;
+            conn->expected_body_len = 0;
+            conn->state = AKARI_CONN_IDLE;
+        } else {
+            akari_release_conn(conn->fd);
+            close(conn->fd);
+        }
     }
 }
 
@@ -1708,11 +1776,14 @@ void akari_printf(akari_context* ctx, const char* fmt, ...) {
     akari_connection* conn = ctx->_conn;
     va_list args;
     va_start(args, fmt);
-    size_t avail = sizeof(conn->res_buf) - ctx->res_len - 150;
-    if (avail <= 0) {
+
+    if (ctx->res_len >= sizeof(conn->res_buf) - 1) {
         va_end(args);
         return;
     }
+
+    size_t avail = sizeof(conn->res_buf) - ctx->res_len;
+
     int n = vsnprintf(conn->res_buf + ctx->res_len, avail, fmt, args);
     va_end(args);
     if (n > 0) {
@@ -2613,10 +2684,14 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 int client_fd = akari_tcp_accept(srv_fd, &client_addr);
                 if (client_fd != -1) {
                     akari_connection* conn = akari_get_conn(client_fd);
-                    if (conn) {
-                        conn->client_ip = client_addr.sin_addr;
-                        conn->epoll_flags = EPOLLIN;
+                    if (!conn) {
+                        close(client_fd);
+                        continue;
                     }
+
+                    conn->client_ip = client_addr.sin_addr;
+                    conn->epoll_flags = EPOLLIN;
+
                     ev.events = EPOLLIN;
                     ev.data.fd = client_fd;
                     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
@@ -2673,6 +2748,7 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
 #include <poll.h>
 #endif
 #include <unistd.h>
+#include <fcntl.h>
 
 void akari_run_poll(int srv_fd, akari_callback on_data) {
     struct pollfd fds[AKARI_MAX_CONNECTIONS + 1];
@@ -2688,10 +2764,22 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
     AKARI_LOG("poll engine started");
 
     while (akari_running) {
+        // Clean up any FDs that might have been closed by sweep_timeouts or handle_write
+        for (int i = 1; i < nfds; i++) {
+            if (fds[i].fd != -1) {
+                int flags = fcntl(fds[i].fd, F_GETFL, 0);
+                if (flags == -1) {
+                    fds[i].fd = -1;
+                }
+            }
+        }
+
         int ready = poll(fds, nfds, 100);
         if (ready == -1) {
             if (akari_running) AKARI_LOG("poll failed");
-            break;
+            // If it still fails, sleep briefly to avoid spin lock and continue
+            usleep(10000); 
+            continue;
         }
 
         for (int i = 0; i < nfds; i++) {
@@ -2702,9 +2790,13 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 int client_fd = akari_tcp_accept(srv_fd, &client_addr);
                 if (client_fd != -1) {
                     akari_connection* conn = akari_get_conn(client_fd);
-                    if (conn) {
-                        conn->client_ip = client_addr.sin_addr;
+                    if (!conn) {
+                        close(client_fd);
+                        continue;
                     }
+
+                    conn->client_ip = client_addr.sin_addr;
+
                     int added = 0;
                     for (int j = 1; j < AKARI_MAX_CONNECTIONS + 1; j++) {
                         if (fds[j].fd == -1) {
@@ -2743,6 +2835,8 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                     if (conn->state == AKARI_CONN_SENDING) {
                         fds[i].events |= POLLOUT;
                     }
+                } else if (conn && conn->fd == -1) {
+                    fds[i].fd = -1;
                 }
             }
         }
