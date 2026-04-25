@@ -8,3 +8,4 @@ build
 **/sdkconfig.old
 **/dependencies.lock
 **/build/
+examples/basic_linux/akari_linux_demo
