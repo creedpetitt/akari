@@ -62,6 +62,7 @@ typedef void (*akari_callback)(akari_connection* conn);
 typedef void (*akari_timer_callback)(void);
 
 akari_connection* akari_get_conn(int fd);
+akari_connection* akari_find_conn(int fd);
 void akari_handle_write(akari_connection* conn);
 void akari_run_server(uint16_t port, akari_callback on_data);
 void akari_stop(void);

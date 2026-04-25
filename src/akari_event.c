@@ -74,13 +74,23 @@ static void init_conn_pool(void) {
     conn_pool_initialized = 1;
 }
 
+akari_connection* akari_find_conn(int fd) {
+    init_conn_pool();
+    for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
+        if (conn_pool[i].fd == fd)
+            return &conn_pool[i];
+    }
+    return NULL;
+}
+
 akari_connection* akari_get_conn(int fd) {
     init_conn_pool();
     int first_empty = -1;
 
+    akari_connection* existing = akari_find_conn(fd);
+    if (existing) return existing;
+
     for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
-        if (conn_pool[i].fd == fd)
-            return &conn_pool[i];
         if (first_empty == -1 && conn_pool[i].fd == -1)
             first_empty = i;
     }

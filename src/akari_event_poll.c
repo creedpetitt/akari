@@ -44,9 +44,10 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
             if (fds[i].revents == 0) continue;
 
             if (fds[i].fd == srv_fd) {
-                struct sockaddr_in client_addr;
-                int client_fd = akari_tcp_accept(srv_fd, &client_addr);
-                if (client_fd != -1) {
+                while (1) {
+                    struct sockaddr_in client_addr;
+                    int client_fd = akari_tcp_accept(srv_fd, &client_addr);
+                    if (client_fd == -1) break;
                     akari_connection* conn = akari_get_conn(client_fd);
                     if (!conn) {
                         close(client_fd);
@@ -73,7 +74,12 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = fds[i].fd;
-                akari_connection* conn = akari_get_conn(client_fd);
+                akari_connection* conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    close(client_fd);
+                    fds[i].fd = -1;
+                    continue;
+                }
                 
                 if (fds[i].revents & POLLIN) {
                     int status = akari_handle_client(client_fd, on_data);
@@ -82,6 +88,12 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                         fds[i].fd = -1;
                         continue;
                     }
+                }
+
+                conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    fds[i].fd = -1;
+                    continue;
                 }
                 
                 if (conn && (fds[i].revents & POLLOUT)) {
