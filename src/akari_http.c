@@ -96,7 +96,9 @@ static void send_response_raw(int fd, int status, const char* content_type,
     akari_connection* conn = akari_get_conn(fd);
     if (!conn) return;
 
-    size_t actual_body_len = (body && body_len > 0) ? body_len : 0;
+    size_t content_length = body_len;
+    size_t inline_body_len = (body && body_len > 0) ? body_len : 0;
+    
     int n = 0;
     while (1) {
         n = snprintf(conn->res_buf, sizeof(conn->res_buf),
@@ -106,7 +108,7 @@ static void send_response_raw(int fd, int status, const char* content_type,
             "Connection: %s\r\n"
             "\r\n",
             status, status_text(status),
-            content_type, actual_body_len,
+            content_type, content_length,
             keep_alive ? "keep-alive" : "close");
 
         if (n <= 0) return;
@@ -114,23 +116,20 @@ static void send_response_raw(int fd, int status, const char* content_type,
 
         size_t header_len = (size_t)n;
         size_t max_body_by_space = sizeof(conn->res_buf) - header_len;
-        if (actual_body_len <= max_body_by_space) {
+        
+        if (inline_body_len <= max_body_by_space) {
             break;
         }
-        actual_body_len = max_body_by_space;
+        
+        content_length = max_body_by_space;
+        inline_body_len = max_body_by_space;
     }
     
     conn->tx_len = (size_t)n;
     
-    if (actual_body_len > 0) {
-        size_t space = sizeof(conn->res_buf) - conn->tx_len;
-        if (actual_body_len <= space) {
-            memcpy(conn->res_buf + conn->tx_len, body, actual_body_len);
-            conn->tx_len += actual_body_len;
-        } else {
-            memcpy(conn->res_buf + conn->tx_len, body, space);
-            conn->tx_len += space;
-        }
+    if (body && inline_body_len > 0) {
+        memcpy(conn->res_buf + conn->tx_len, body, inline_body_len);
+        conn->tx_len += inline_body_len;
     }
     
     conn->tx_sent = 0;

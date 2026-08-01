@@ -126,6 +126,7 @@ typedef void (*akari_callback)(akari_connection* conn);
 typedef void (*akari_timer_callback)(void);
 
 akari_connection* akari_get_conn(int fd);
+akari_connection* akari_find_conn(int fd);
 void akari_handle_write(akari_connection* conn);
 void akari_run_server(uint16_t port, akari_callback on_data);
 void akari_stop(void);
@@ -1046,13 +1047,23 @@ static void init_conn_pool(void) {
     conn_pool_initialized = 1;
 }
 
+akari_connection* akari_find_conn(int fd) {
+    init_conn_pool();
+    for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
+        if (conn_pool[i].fd == fd)
+            return &conn_pool[i];
+    }
+    return NULL;
+}
+
 akari_connection* akari_get_conn(int fd) {
     init_conn_pool();
     int first_empty = -1;
 
+    akari_connection* existing = akari_find_conn(fd);
+    if (existing) return existing;
+
     for (int i = 0; i < AKARI_MAX_CONNECTIONS; i++) {
-        if (conn_pool[i].fd == fd)
-            return &conn_pool[i];
         if (first_empty == -1 && conn_pool[i].fd == -1)
             first_empty = i;
     }
@@ -1384,7 +1395,9 @@ static void send_response_raw(int fd, int status, const char* content_type,
     akari_connection* conn = akari_get_conn(fd);
     if (!conn) return;
 
-    size_t actual_body_len = (body && body_len > 0) ? body_len : 0;
+    size_t content_length = body_len;
+    size_t inline_body_len = (body && body_len > 0) ? body_len : 0;
+    
     int n = 0;
     while (1) {
         n = snprintf(conn->res_buf, sizeof(conn->res_buf),
@@ -1394,7 +1407,7 @@ static void send_response_raw(int fd, int status, const char* content_type,
             "Connection: %s\r\n"
             "\r\n",
             status, status_text(status),
-            content_type, actual_body_len,
+            content_type, content_length,
             keep_alive ? "keep-alive" : "close");
 
         if (n <= 0) return;
@@ -1402,23 +1415,20 @@ static void send_response_raw(int fd, int status, const char* content_type,
 
         size_t header_len = (size_t)n;
         size_t max_body_by_space = sizeof(conn->res_buf) - header_len;
-        if (actual_body_len <= max_body_by_space) {
+        
+        if (inline_body_len <= max_body_by_space) {
             break;
         }
-        actual_body_len = max_body_by_space;
+        
+        content_length = max_body_by_space;
+        inline_body_len = max_body_by_space;
     }
     
     conn->tx_len = (size_t)n;
     
-    if (actual_body_len > 0) {
-        size_t space = sizeof(conn->res_buf) - conn->tx_len;
-        if (actual_body_len <= space) {
-            memcpy(conn->res_buf + conn->tx_len, body, actual_body_len);
-            conn->tx_len += actual_body_len;
-        } else {
-            memcpy(conn->res_buf + conn->tx_len, body, space);
-            conn->tx_len += space;
-        }
+    if (body && inline_body_len > 0) {
+        memcpy(conn->res_buf + conn->tx_len, body, inline_body_len);
+        conn->tx_len += inline_body_len;
     }
     
     conn->tx_sent = 0;
@@ -2680,9 +2690,10 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
         }
         for (int i = 0; i < nfds; i++) {
             if (events[i].data.fd == srv_fd) {
-                struct sockaddr_in client_addr;
-                int client_fd = akari_tcp_accept(srv_fd, &client_addr);
-                if (client_fd != -1) {
+                while (1) {
+                    struct sockaddr_in client_addr;
+                    int client_fd = akari_tcp_accept(srv_fd, &client_addr);
+                    if (client_fd == -1) break;
                     akari_connection* conn = akari_get_conn(client_fd);
                     if (!conn) {
                         close(client_fd);
@@ -2702,7 +2713,12 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = events[i].data.fd;
-                akari_connection* conn = akari_get_conn(client_fd);
+                akari_connection* conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    close(client_fd);
+                    continue;
+                }
                 
                 if (events[i].events & EPOLLIN) {
                     int status = akari_handle_client(client_fd, on_data);
@@ -2711,6 +2727,12 @@ void akari_run_epoll(int srv_fd, akari_callback on_data) {
                         close(client_fd);
                         continue;
                     }
+                }
+
+                conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    continue;
                 }
                 
                 if (conn && (events[i].events & EPOLLOUT)) {
@@ -2786,9 +2808,10 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
             if (fds[i].revents == 0) continue;
 
             if (fds[i].fd == srv_fd) {
-                struct sockaddr_in client_addr;
-                int client_fd = akari_tcp_accept(srv_fd, &client_addr);
-                if (client_fd != -1) {
+                while (1) {
+                    struct sockaddr_in client_addr;
+                    int client_fd = akari_tcp_accept(srv_fd, &client_addr);
+                    if (client_fd == -1) break;
                     akari_connection* conn = akari_get_conn(client_fd);
                     if (!conn) {
                         close(client_fd);
@@ -2815,7 +2838,12 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                 }
             } else {
                 int client_fd = fds[i].fd;
-                akari_connection* conn = akari_get_conn(client_fd);
+                akari_connection* conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    close(client_fd);
+                    fds[i].fd = -1;
+                    continue;
+                }
                 
                 if (fds[i].revents & POLLIN) {
                     int status = akari_handle_client(client_fd, on_data);
@@ -2824,6 +2852,12 @@ void akari_run_poll(int srv_fd, akari_callback on_data) {
                         fds[i].fd = -1;
                         continue;
                     }
+                }
+
+                conn = akari_find_conn(client_fd);
+                if (!conn) {
+                    fds[i].fd = -1;
+                    continue;
                 }
                 
                 if (conn && (fds[i].revents & POLLOUT)) {
